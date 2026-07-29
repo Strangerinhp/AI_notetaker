@@ -1,0 +1,10 @@
+flask
+huggingface-hub
+numpy
+openai-whisper
+pydub
+requests
+sherpa-onnx
+soundfile
+werkzeug
+imageio-ffmpeg

@@ -1,0 +1,34 @@
+=== BIÊN BẢN HỌP ===
+
+**BIÊN BẢN CUỘC HỌP: CHUẨN BỊ THAM GIA AI CHALLENGE**
+
+**1. Tóm tắt chung**
+Cuộc họp nhanh nhằm thống nhất kế hoạch, định hướng đề tài và phân công nhiệm vụ cho đội hình tham gia cuộc thi AI Challenge diễn ra vào cuối tuần tại FPT Tower. Đội quyết định lựa chọn chủ đề "Phát hiện gian lận giao dịch" để tận dụng thế mạnh sẵn có về OCR và pipeline dữ liệu. Cuộc họp cũng xác định rõ lịch trình thi đấu và quy định nghiêm ngặt về việc bảo mật dữ liệu.
+
+**2. Các nội dung chính đã thảo luận**
+* **Thông tin cuộc thi:** AI Challenge diễn ra tại FPT Tower do Ngân hàng SHB tài trợ (tổng giải thưởng 1 tỷ đồng). Lĩnh vực thi gồm: dự đoán rủi ro tín dụng, phát hiện gian lận giao dịch, chatbot hỗ trợ khách hàng.
+* **Định hướng chuyên môn:** Team thống nhất chọn hướng **Phát hiện gian lận giao dịch** do có thể kế thừa kinh nghiệm làm OCR và pipeline dữ liệu từ dự án nội bộ.
+* **Dữ liệu & Bảo mật:** Sử dụng dữ liệu giả lập (public synthetic dataset) trên Kaggle để luyện tập. Tuyệt đối không sử dụng dữ liệu thật hoặc dữ liệu đã ẩn danh của ngân hàng SHB dưới mọi hình thức.
+* **Hạ tầng & Lịch trình:**
+  * Lịch thi: Nộp slide pitch trước 9:00 sáng Thứ 7 -> Thi Live Coding chiều Thứ 7 -> Thuyết trình chung kết vào Chủ nhật.
+  * Hạ tầng: Cần chuẩn bị laptop GPU đủ mạnh và kiểm tra khả năng hỗ trợ Cloud GPU từ Ban tổ chức.
+  * Nhân sự: Cần bổ sung thêm 1 nhân sự Backend hỗ trợ deploy demo.
+
+**3. Quyết định đã chốt**
+* Đăng ký tham gia cuộc thi AI Challenge với chủ đề: **Phát hiện gian lận giao dịch**.
+* Sử dụng bộ dữ liệu giả lập công khai trên Kaggle để huấn luyện và demo.
+* Anh Minh làm đầu mối liên hệ chính của team.
+
+**4. Việc cần làm tiếp theo (Action Items)**
+
+| STT | Công việc | Người phụ trách | Hạn chót / Ghi chú |
+| :--- | :--- | :--- | :--- |
+| 1 | Phụ trách phần mô hình (Model) và chuẩn bị dữ liệu Kaggle | **Lan** | Trước ngày thi |
+| 2 | Đảm bảo hạ tầng (GPU), kiểm tra Cloud GPU của BTC, phụ trách Backend/Deploy | **Hùng** | Trước ngày thi |
+| 3 | Liên hệ hỏi Quân (team Mobile) hỗ trợ Backend cho đội vào cuối tuần | *(Thành viên team)* | Sớm nhất có thể |
+| 4 | Thiết kế Demo và thiết kế Slide trình bày (Pitching Slide) | **Trang** | Nộp trước **9:00 sáng Thứ 7** |
+| 5 | Làm đầu mối liên hệ chính; Hỏi bộ phận pháp lý về các quy định dữ liệu liên quan | **Minh** | Trước ngày thi |
+
+=== TRANSCRIPT ĐẦY ĐỦ ===
+
+Chào mọi người, hôm nay mình họp nhanh để chốt đội hình đi thi AI Challenge cuối tuần này tại FPT Tower. Cuộc thi năm nay do ngân hàng SHB tài trợ 1 tỷ đồng cho giải thưởng chung, quy mô lớn hơn năm ngoái nhiều nên mình nghĩ team mình nên tham gia nghiêm túc. Em đọc thể lệ rồi, chủ đề năm nay xoay quanh ứng dụng AI trong lĩnh vực tài chính, dự đoán rủi ro do tín dụng, phát hiện gian lận giao dịch hoặc chat bot hỗ trợ khách hàng. Mình nên chọn hướng nào cho phù hợp với thế mạnh của team? Mình nghĩ nên đi theo hướng phát hiện gian lận giao dịch vì team mình đang có sẵn kinh nghiệm làm OCR và pipeline dữ liệu từ dự án Rác nội bộ dễ tận dụng lại. Hùng, em đồng ý về hạ tầng. Cuối tuần thi trực tiếp tại FPT Tower nên mình cần chuẩn bị laptop có GPU đủ mạnh với lại kiểm tra trước xem ban tổ chức có cấp GPU cloud không hay mình phải tự mang máy. Trang, em sẽ lo phần thiết kế demo và slide trình bày. Có deadline nộp slide trước không anh Minh? Ban tổ chức yêu cầu nộp slide pitch trước 9 giờ sáng thứ bảy. Sau đó thi live coding buổi chiều và chung kết thuyết trình trước ban giám khảo vào chủ nhật. Vậy mình cần chốt bộ dữ liệu mẫu để luyện thử trước. Em đề xuất dùng bộ dữ liệu giao dịch giả lập public trên Kaggle để tập luyện trước, tránh dùng dữ liệu nội bộ ngân hàng vì lý do bảo mật. Đúng rồi, tuyệt đối không dùng dữ liệu thật của SHB kể cả dữ liệu đã ẩn danh. Mình sẽ hỏi thêm bên pháp lý để chắc chắn không vi phạm quy định nội bộ. Về đội hình, em nghĩ mình cần thêm một bạn backend nữa để hỗ trợ deploy demo lúc thi, tội mình có ai rảnh cuối tuần này không? Em hỏi thử bạn Quân bên team mobile xem bạn ấy có tham gia được không. Ok, chút vậy, tóm lại Lan lo phần mô đồ và dữ liệu, Hùng lo hạ tầng và backend, Trang lo demo và slide, mình sẽ làm đầu mối liên hệ. Hãy nghe đoạn audio này và chuyển toàn bộ nội dung giọng nói thành văn bản tiếng Việt.

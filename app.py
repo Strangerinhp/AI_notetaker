@@ -4,11 +4,11 @@ app.py
 Web app self-hosted để ghi biên bản họp từ file audio, chạy 100% local:
   - Whisper (transcribe.py)  -> chuyển giọng nói thành văn bản
   - Ollama  (summarize.py)   -> tóm tắt thành biên bản họp
-  - pydub   (audio_utils.py) -> cắt file audio dài thành từng đoạn nhỏ
+  - FFmpeg  (audio_utils.py) -> cắt file audio dài thành từng đoạn nhỏ
 
 Chạy:
     python app.py
-Sau đó mở trình duyệt: http://localhost:5000
+Sau đó mở trình duyệt: http://localhost:5001
 """
 
 import argparse
@@ -17,6 +17,7 @@ import re
 import shutil
 import threading
 import uuid
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
@@ -33,6 +34,7 @@ RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "ogg", "flac", "webm"}
 SEGMENT_MINUTES = 2
+NGHIASR_SEGMENT_MINUTES = 0.5
 WHISPER_LANGUAGE = "vi"  # None = tự nhận diện ngôn ngữ; đặt "vi" nếu luôn là tiếng Việt
 OLLAMA_MODEL = "gemma4:e2b"  # đổi theo model bạn đã pull trong Ollama
 
@@ -54,6 +56,7 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # giới hạn 2GB / 
 # đồng thời, nên thay bằng Redis/SQLite thay vì dict trong RAM.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
+results_lock = threading.Lock()
 
 
 def allowed_file(filename: str) -> bool:
@@ -82,7 +85,16 @@ def process_audio_file(file_path: str, job_id: str, transcribe_engine: str = "wh
 
     try:
         update_job(job_id, status="splitting", message="Đang chia nhỏ file audio...")
-        segment_paths = split_audio(file_path, segment_dir, segment_minutes=SEGMENT_MINUTES)
+        segment_minutes = (
+            NGHIASR_SEGMENT_MINUTES
+            if transcribe_engine == "nghiasr"
+            else SEGMENT_MINUTES
+        )
+        segment_paths = split_audio(
+            file_path,
+            segment_dir,
+            segment_minutes=segment_minutes,
+        )
 
         total = len(segment_paths)
         engine_label = TRANSCRIBE_ENGINE_LABELS[transcribe_engine]
@@ -207,6 +219,106 @@ def job_status(job_id):
     return jsonify(response)
 
 
+# Các helper/API nhỏ dưới đây chỉ phục vụ sidebar lịch sử và Markdown editor.
+def _result_path(result_id: str) -> str | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", result_id):
+        return None
+    return os.path.join(RESULTS_FOLDER, f"{result_id}.txt")
+
+
+def _read_result(result_id: str) -> dict | None:
+    path = _result_path(result_id)
+    if not path or not os.path.isfile(path):
+        return None
+
+    with open(path, "r", encoding="utf-8") as source:
+        content = source.read()
+    marker = "=== TRANSCRIPT ĐẦY ĐỦ ==="
+    summary_part, transcript = (
+        content.split(marker, 1) if marker in content else (content, "")
+    )
+    summary = summary_part.replace("=== BIÊN BẢN HỌP ===", "", 1).strip()
+
+    title = f"Cuộc họp {datetime.fromtimestamp(os.path.getmtime(path)):%d/%m/%Y}"
+    for line in summary.splitlines():
+        candidate = line.strip().lstrip("#>").replace("**", "").strip(" *_`")
+        if candidate and candidate != "---":
+            title = candidate[:120]
+            break
+
+    timestamp = datetime.fromtimestamp(
+        os.path.getmtime(path), tz=timezone.utc
+    ).isoformat()
+    return {
+        "id": result_id,
+        "title": title,
+        "filename": "",
+        "engine": "",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "summary": summary,
+        "transcript": transcript.strip(),
+    }
+
+
+def _write_result(result_id: str, summary: str, transcript: str) -> None:
+    path = _result_path(result_id)
+    if not path:
+        raise ValueError("Meeting ID không hợp lệ")
+    temporary_path = f"{path}.tmp"
+    with open(temporary_path, "w", encoding="utf-8", newline="\n") as output:
+        output.write(
+            "=== BIÊN BẢN HỌP ===\n\n"
+            f"{summary}\n\n"
+            "=== TRANSCRIPT ĐẦY ĐỦ ===\n\n"
+            f"{transcript}"
+        )
+    os.replace(temporary_path, path)
+
+
+@app.route("/api/meetings")
+def meetings_index():
+    meetings = []
+    with results_lock:
+        for filename in os.listdir(RESULTS_FOLDER):
+            if filename.endswith(".txt"):
+                meeting = _read_result(filename[:-4])
+                if meeting:
+                    meetings.append({
+                        key: meeting[key]
+                        for key in ("id", "title", "created_at", "updated_at")
+                    })
+    meetings.sort(key=lambda item: item["updated_at"], reverse=True)
+    return jsonify({"meetings": meetings})
+
+
+@app.route("/api/meetings/<result_id>")
+def meeting_detail(result_id):
+    with results_lock:
+        meeting = _read_result(result_id)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+    return jsonify(meeting)
+
+
+@app.route("/api/meetings/<result_id>", methods=["PUT"])
+def update_meeting(result_id):
+    payload = request.get_json(silent=True) or {}
+    summary = payload.get("summary")
+    transcript = payload.get("transcript")
+    if not isinstance(summary, str) or not isinstance(transcript, str):
+        return jsonify({"error": "Nội dung không hợp lệ"}), 400
+    if len(summary) > 20_000_000 or len(transcript) > 20_000_000:
+        return jsonify({"error": "Nội dung quá lớn"}), 413
+
+    with results_lock:
+        if not _read_result(result_id):
+            return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+        _write_result(result_id, summary, transcript)
+        meeting = _read_result(result_id)
+    return jsonify(meeting)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the AI Meeting Note Taker.")
     parser.add_argument(
@@ -222,5 +334,5 @@ if __name__ == "__main__":
     app.config["USE_GEMINI_API"] = args.api
     if args.api:
         print(f"[API] Gemini enabled for summaries: {GEMINI_MODEL}")
-    print("Meeting Note Taker đang chạy tại http://localhost:5000")
+    print("Meeting Note Taker đang chạy tại http://localhost:5001")
     app.run(host="0.0.0.0", port=5001, debug=False, use_reloader=False)

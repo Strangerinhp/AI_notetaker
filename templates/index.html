@@ -1,620 +1,171 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Meeting Note Taker</title>
-<!-- Marked.js để render Markdown -->
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: -apple-system, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
-    background: linear-gradient(135deg, #f8f9fc 0%, #eef1f8 50%, #fdf5ee 100%);
-    min-height: 100vh;
-    color: #1a1a2e;
-  }
-
-  /* Navbar */
-  .navbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 40px;
-    background: #fff;
-    border-bottom: 1px solid #eee;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-  .navbar-brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    color: #1a1a2e;
-  }
-  .navbar-brand span {
-    background: linear-gradient(135deg, #e8590c, #f76707);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .navbar-links {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-  }
-  .navbar-links a {
-    text-decoration: none;
-    color: #555;
-    font-size: 0.9rem;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-  .navbar-links a:hover { color: #e8590c; }
-  .badge-ai {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #eafbe7;
-    color: #2b8a3e;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 600;
-  }
-  .badge-ai::before {
-    content: '';
-    width: 8px;
-    height: 8px;
-    background: #2b8a3e;
-    border-radius: 50%;
-  }
-
-  /* Hero Section */
-  .hero {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 60px 40px 40px;
-  }
-  .hero h1 {
-    font-size: 3rem;
-    font-weight: 800;
-    line-height: 1.2;
-    margin-bottom: 16px;
-    color: #1a1a2e;
-  }
-  .hero h1 em {
-    font-style: italic;
-    color: #e8590c;
-  }
-  .hero p {
-    font-size: 1.1rem;
-    color: #555;
-    max-width: 600px;
-    line-height: 1.7;
-    margin-bottom: 32px;
-  }
-  .hero p strong {
-    color: #1a1a2e;
-  }
-
-  /* Stats Row */
-  .stats-row {
-    display: flex;
-    gap: 16px;
-    margin-top: 40px;
-    flex-wrap: wrap;
-  }
-  .stat-card {
-    background: #fff;
-    border: 1px solid #eee;
-    border-radius: 16px;
-    padding: 20px 28px;
-    min-width: 140px;
-    flex: 1;
-  }
-  .stat-card .stat-value {
-    font-size: 1.8rem;
-    font-weight: 800;
-    color: #e8590c;
-  }
-  .stat-card .stat-label {
-    font-size: 0.8rem;
-    color: #777;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-top: 4px;
-  }
-
-  /* Main Content */
-  .main-content {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 40px 60px;
-  }
-
-  /* Upload Card */
-  .upload-card {
-    background: #fff;
-    border-radius: 20px;
-    padding: 40px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
-    margin-bottom: 32px;
-  }
-  .upload-card h2 {
-    font-size: 1.3rem;
-    font-weight: 700;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  /* Engine Selector */
-  .engine-selector {
-    margin-bottom: 24px;
-  }
-  .engine-label {
-    display: block;
-    font-weight: 600;
-    margin-bottom: 12px;
-    color: #333;
-  }
-  .engine-select {
-    width: 100%;
-    border: 2px solid #e8e8e8;
-    border-radius: 12px;
-    padding: 14px 16px;
-    transition: all 0.2s ease;
-    background: #fafbfc;
-    color: #1a1a2e;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .engine-select:hover,
-  .engine-select:focus {
-    border-color: #e8590c;
-    background: #fff8f5;
-    outline: none;
-    box-shadow: 0 2px 12px rgba(232, 89, 12, 0.12);
-  }
-
-  #drop-zone {
-    border: 2px dashed #d0d5dd;
-    border-radius: 16px;
-    padding: 48px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    background: #fafbfc;
-  }
-  #drop-zone:hover {
-    border-color: #e8590c;
-    background: #fff8f5;
-  }
-  #drop-zone.dragover {
-    border-color: #e8590c;
-    background: #fff3ee;
-    transform: scale(1.01);
-  }
-  #drop-zone p {
-    color: #555;
-    margin: 8px 0;
-  }
-  #drop-zone .drop-icon {
-    font-size: 2.5rem;
-    margin-bottom: 12px;
-  }
-  #drop-zone .drop-hint {
-    font-size: 0.8rem;
-    color: #999;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #e8590c, #f76707);
-    color: #fff;
-    border: none;
-    padding: 14px 32px;
-    border-radius: 12px;
-    cursor: pointer;
-    font-size: 1rem;
-    font-weight: 600;
-    margin-top: 20px;
-    transition: all 0.3s ease;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(232, 89, 12, 0.3);
-  }
-  .btn-primary:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-
-  /* Status */
-  #status {
-    margin-top: 20px;
-    padding: 14px 20px;
-    border-radius: 12px;
-    background: #f0f4ff;
-    font-size: 0.95rem;
-    color: #333;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .spinner {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 2.5px solid #ddd;
-    border-top-color: #e8590c;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    flex-shrink: 0;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Result Card */
-  .result-card {
-    background: #fff;
-    border-radius: 20px;
-    padding: 40px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
-    margin-bottom: 32px;
-  }
-  .result-card h2 {
-    font-size: 1.3rem;
-    font-weight: 700;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: #1a1a2e;
-  }
-
-  /* Tabs */
-  .tabs {
-    display: flex;
-    gap: 4px;
-    background: #f2f4f7;
-    padding: 4px;
-    border-radius: 12px;
-    margin-bottom: 24px;
-    width: fit-content;
-  }
-  .tab-btn {
-    padding: 10px 20px;
-    border: none;
-    background: transparent;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: #666;
-    transition: all 0.2s;
-  }
-  .tab-btn.active {
-    background: #fff;
-    color: #1a1a2e;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    font-weight: 600;
-  }
-
-  .tab-content {
-    display: none;
-  }
-  .tab-content.active {
-    display: block;
-  }
-
-  /* Markdown rendered content */
-  .md-content {
-    line-height: 1.8;
-    font-size: 0.95rem;
-    color: #333;
-  }
-  .md-content h1 { font-size: 1.5rem; font-weight: 700; margin: 24px 0 12px; color: #1a1a2e; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; }
-  .md-content h2 { font-size: 1.25rem; font-weight: 700; margin: 20px 0 10px; color: #1a1a2e; }
-  .md-content h3 { font-size: 1.1rem; font-weight: 600; margin: 16px 0 8px; color: #333; }
-  .md-content p { margin: 10px 0; }
-  .md-content ul, .md-content ol { margin: 10px 0 10px 24px; }
-  .md-content li { margin: 6px 0; }
-  .md-content strong { color: #1a1a2e; }
-  .md-content blockquote {
-    border-left: 4px solid #e8590c;
-    padding: 12px 16px;
-    margin: 16px 0;
-    background: #fff8f5;
-    border-radius: 0 8px 8px 0;
-    color: #555;
-  }
-  .md-content code {
-    background: #f4f4f5;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.88rem;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-  }
-  .md-content pre {
-    background: #1a1a2e;
-    color: #e8e8e8;
-    padding: 16px 20px;
-    border-radius: 12px;
-    overflow-x: auto;
-    margin: 16px 0;
-  }
-  .md-content pre code {
-    background: none;
-    padding: 0;
-    color: inherit;
-  }
-  .md-content table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 16px 0;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .md-content th, .md-content td {
-    padding: 10px 14px;
-    border: 1px solid #eee;
-    text-align: left;
-  }
-  .md-content th {
-    background: #f8f9fa;
-    font-weight: 600;
-  }
-  .md-content hr {
-    border: none;
-    border-top: 1px solid #eee;
-    margin: 24px 0;
-  }
-
-  /* Transcript raw text style */
-  .transcript-text {
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    background: #f8f9fa;
-    padding: 20px;
-    border-radius: 12px;
-    font-size: 0.9rem;
-    line-height: 1.8;
-    color: #444;
-    max-height: 500px;
-    overflow-y: auto;
-  }
-
-  .hidden { display: none; }
-
-  /* Responsive */
-  @media (max-width: 768px) {
-    .navbar { padding: 12px 16px; }
-    .navbar-links { display: none; }
-    .hero { padding: 32px 16px 24px; }
-    .hero h1 { font-size: 2rem; }
-    .main-content { padding: 0 16px 40px; }
-    .upload-card, .result-card { padding: 24px; }
-    .stats-row { gap: 10px; }
-    .stat-card { padding: 14px 18px; min-width: 100px; }
-    .stat-card .stat-value { font-size: 1.4rem; }
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MeetNote — Ghi chú cuộc họp</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
 <body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M7 18v-4M12 22V10M17 25V7M22 21V11M27 18v-4"/></svg>
+        </span>
+        <span><strong>MeetNote</strong><small>Local meeting notes</small></span>
+        <button class="icon-button mobile-only" id="close-sidebar" type="button"
+                aria-label="Đóng sidebar">×</button>
+      </div>
 
-<!-- Navbar -->
-<nav class="navbar">
-  <div class="navbar-brand">
-    🎙️ <span>MeetNote</span> AI
-  </div>
-  <div class="navbar-links">
-    <span class="badge-ai">AI Local — phục vụ 24/7</span>
-  </div>
-</nav>
-
-<!-- Hero -->
-<section class="hero">
-  <h1>Ghi chú họp <em>nhanh hơn,</em><br>chính xác hơn với AI.</h1>
-  <p>
-    Tải lên file audio cuộc họp, được AI chuyển thành <strong>biên bản chi tiết</strong>
-    — chạy 100% local, không cần internet, <strong>riêng tư tuyệt đối</strong>.
-  </p>
-
-  <!-- Stats -->
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-value">100%</div>
-      <div class="stat-label">Local & Riêng tư</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">AI</div>
-      <div class="stat-label">Whisper + Gemma4:e2b</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">24/7</div>
-      <div class="stat-label">Sẵn sàng mọi lúc</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">7+</div>
-      <div class="stat-label">Định dạng hỗ trợ</div>
-    </div>
-  </div>
-</section>
-
-<!-- Main Content -->
-<div class="main-content">
-
-  <!-- Upload Card -->
-  <div class="upload-card">
-    <h2>📤 Tải lên file audio</h2>
-
-    <!-- Engine Selection -->
-    <div class="engine-selector">
-      <label class="engine-label">🤖 Chọn AI Transcribe:</label>
-      <select id="engine-select" class="engine-select" name="engine">
-        <option value="whisper">🐻 Whisper — chính xác cao, cần GPU/RAM lớn</option>
-        <option value="gemma">💎 Gemma 4 E2B — nhẹ, nhanh, chạy qua Ollama</option>
-        <option value="nghiasr">🎙️ NghiASR — tối ưu cho tiếng Việt và tiếng Anh</option>
-      </select>
-    </div>
-
-    <div id="drop-zone">
-      <div class="drop-icon">🎵</div>
-      <p><strong>Kéo thả file audio vào đây</strong></p>
-      <p>hoặc bấm để chọn file</p>
-      <p class="drop-hint">Hỗ trợ: mp3, wav, m4a, mp4, ogg, flac, webm — tối đa 2GB</p>
-      <input type="file" id="file-input" accept="audio/*,video/mp4" class="hidden">
-    </div>
-    <div style="text-align: center;">
-      <button class="btn-primary" id="upload-btn" disabled>
-        🚀 Tải lên & Xử lý
+      <button class="new-button" id="new-meeting" type="button">
+        <span>＋</span> Cuộc họp mới
       </button>
-    </div>
-    <div id="status" class="hidden"></div>
+
+      <div class="history-header">
+        <span>Lịch sử</span>
+        <span id="history-count">0</span>
+      </div>
+      <label class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+        <input id="history-search" type="search" placeholder="Tìm cuộc họp...">
+      </label>
+      <nav class="history" id="history-list" aria-label="Lịch sử cuộc họp">
+        <p class="empty">Chưa có cuộc họp nào.</p>
+      </nav>
+
+      <div class="local-note">
+        <i></i>
+        <span><strong>Xử lý trên máy</strong><small>Audio được xóa sau khi hoàn tất</small></span>
+      </div>
+    </aside>
+
+    <button class="backdrop" id="backdrop" type="button" aria-label="Đóng sidebar"></button>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menu-button" type="button"
+                aria-label="Mở sidebar">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div>
+          <small id="page-kicker">Không gian làm việc</small>
+          <strong id="page-title">Cuộc họp mới</strong>
+        </div>
+        <span class="save-status saved" id="save-status"><i></i><b>Đã lưu</b></span>
+      </header>
+
+      <section class="upload-view" id="upload-view">
+        <div class="intro">
+          <span class="eyebrow">Ghi chú cuộc họp bằng AI</span>
+          <h1>Từ bản ghi âm<br>đến ghi chú rõ ràng.</h1>
+          <p>Tải lên cuộc họp đã ghi âm. MeetNote sẽ tạo transcript và bản tóm
+             tắt mà bạn có thể chỉnh sửa trực tiếp bằng Markdown.</p>
+        </div>
+
+        <div class="upload-card" id="upload-card">
+          <div class="card-heading">
+            <div><small>BƯỚC 1</small><h2>Chọn bản ghi âm</h2></div>
+            <span>Tối đa 2 GB</span>
+          </div>
+
+          <button class="drop-zone" id="drop-zone" type="button">
+            <span class="drop-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+            </span>
+            <strong id="file-name">Thả file vào đây hoặc bấm để chọn</strong>
+            <small id="file-detail">MP3, WAV, M4A, MP4, OGG, FLAC hoặc WEBM</small>
+            <input id="file-input" type="file" hidden
+                   accept=".mp3,.wav,.m4a,.mp4,.ogg,.flac,.webm,audio/*,video/mp4">
+          </button>
+
+          <label class="select-field">
+            <span>Model transcript</span>
+            <select id="engine-select">
+              <option value="whisper">Whisper — chính xác cao</option>
+              <option value="gemma">Gemma 4 E2B — nhẹ, qua Ollama</option>
+              <option value="nghiasr">NghiASR — tối ưu Việt / Anh</option>
+            </select>
+          </label>
+
+          <button class="primary-button" id="upload-button" type="button" disabled>
+            Bắt đầu xử lý
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+
+        <div class="processing-card hidden" id="processing-card">
+          <div class="wave"><i></i><i></i><i></i></div>
+          <div><small>ĐANG XỬ LÝ</small><h2 id="process-title">Đang tải file...</h2>
+            <p id="process-message">Vui lòng giữ trang này mở.</p></div>
+          <span class="progress"><i id="progress-fill"></i></span>
+        </div>
+      </section>
+
+      <section class="meeting-view hidden" id="meeting-view">
+        <div class="meeting-heading">
+          <div>
+            <h1 id="meeting-title">Cuộc họp</h1>
+            <p id="meeting-meta"></p>
+          </div>
+          <div class="meeting-actions">
+            <button class="secondary-button" id="download-button" type="button">
+              <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
+              Tải .md
+            </button>
+            <button class="primary-button small" id="save-button" type="button">
+              <svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
+              Lưu
+            </button>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button class="tab active" type="button" data-document="summary">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
+            Tóm tắt
+          </button>
+          <button class="tab" type="button" data-document="transcript">
+            <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg>
+            Transcript
+          </button>
+        </div>
+
+        <div class="editor">
+          <div class="toolbar">
+            <button type="button" data-format="heading">H2</button>
+            <button type="button" data-format="bold"><b>B</b></button>
+            <button type="button" data-format="italic"><em>I</em></button>
+            <span></span>
+            <button type="button" data-format="bullet">• List</button>
+            <button type="button" data-format="number">1. List</button>
+            <button type="button" data-format="quote">❝</button>
+            <button type="button" data-format="code">&lt;/&gt;</button>
+            <button type="button" data-format="link">Link</button>
+            <div class="view-modes">
+              <button type="button" data-mode="write">Viết</button>
+              <button class="active" type="button" data-mode="split">Chia đôi</button>
+              <button type="button" data-mode="preview">Xem</button>
+            </div>
+          </div>
+          <div class="editor-body split" id="editor-body">
+            <div class="source-pane">
+              <small>MARKDOWN</small>
+              <textarea id="markdown-input" spellcheck="true"></textarea>
+            </div>
+            <div class="preview-pane">
+              <small>XEM TRƯỚC</small>
+              <article class="markdown" id="markdown-preview"></article>
+            </div>
+          </div>
+          <footer><span id="document-stats">0 từ · 0 ký tự</span><span>Tự động lưu</span></footer>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <!-- Result Card -->
-  <div class="result-card hidden" id="result-card">
-    <h2>📋 Kết quả</h2>
-
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="minutes">📝 Biên bản họp</button>
-      <button class="tab-btn" data-tab="transcript">🎤 Transcript</button>
-    </div>
-
-    <div class="tab-content active" id="tab-minutes">
-      <div class="md-content" id="minutes-output"></div>
-    </div>
-    <div class="tab-content" id="tab-transcript">
-      <div class="transcript-text" id="transcript-output"></div>
-    </div>
-  </div>
-
-</div>
-
-<script>
-// Tabs
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-  });
-});
-
-// Upload logic
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-const uploadBtn = document.getElementById('upload-btn');
-const statusEl = document.getElementById('status');
-const resultCard = document.getElementById('result-card');
-const minutesOutput = document.getElementById('minutes-output');
-const transcriptOutput = document.getElementById('transcript-output');
-const engineSelect = document.getElementById('engine-select');
-
-let selectedFile = null;
-let pollTimer = null;
-
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
-});
-fileInput.addEventListener('change', () => {
-  if (fileInput.files.length) setFile(fileInput.files[0]);
-});
-
-function setFile(file) {
-  selectedFile = file;
-  dropZone.innerHTML = `
-    <div class="drop-icon">✅</div>
-    <p><strong>${file.name}</strong></p>
-    <p style="color:#888; font-size:0.85rem;">${(file.size / 1024 / 1024).toFixed(1)} MB</p>
-  `;
-  uploadBtn.disabled = false;
-}
-
-uploadBtn.addEventListener('click', async () => {
-  if (!selectedFile) return;
-  uploadBtn.disabled = true;
-  resultCard.classList.add('hidden');
-  statusEl.classList.remove('hidden');
-  statusEl.innerHTML = '<span class="spinner"></span> Đang tải file lên...';
-
-  const formData = new FormData();
-  formData.append('file', selectedFile);
-  formData.append('engine', engineSelect.value);
-
-  try {
-    const res = await fetch('/upload', { method: 'POST', body: formData });
-    const data = await res.json();
-
-    if (!res.ok) {
-      statusEl.innerHTML = '❌ ' + (data.error || 'Có lỗi xảy ra');
-      uploadBtn.disabled = false;
-      return;
-    }
-
-    pollStatus(data.job_id);
-  } catch (err) {
-    statusEl.innerHTML = '❌ Lỗi kết nối tới server: ' + err.message;
-    uploadBtn.disabled = false;
-  }
-});
-
-function pollStatus(jobId) {
-  pollTimer = setInterval(async () => {
-    try {
-      const res = await fetch(`/status/${jobId}`);
-      const data = await res.json();
-
-      statusEl.innerHTML = `<span class="spinner"></span> ${data.message}`;
-
-      if (data.status === 'completed') {
-        clearInterval(pollTimer);
-        statusEl.innerHTML = '✅ Hoàn tất! Xem kết quả bên dưới.';
-        statusEl.style.background = '#eafbe7';
-        statusEl.style.color = '#2b8a3e';
-
-        // Render Markdown cho biên bản họp
-        minutesOutput.innerHTML = marked.parse(data.minutes || '');
-        transcriptOutput.textContent = data.transcript || '';
-
-        resultCard.classList.remove('hidden');
-        uploadBtn.disabled = false;
-      } else if (data.status === 'error') {
-        clearInterval(pollTimer);
-        statusEl.innerHTML = '❌ ' + data.message;
-        statusEl.style.background = '#fff0f0';
-        statusEl.style.color = '#c92a2a';
-        uploadBtn.disabled = false;
-      }
-    } catch (err) {
-      clearInterval(pollTimer);
-      statusEl.innerHTML = '❌ Mất kết nối tới server.';
-      statusEl.style.background = '#fff0f0';
-      statusEl.style.color = '#c92a2a';
-      uploadBtn.disabled = false;
-    }
-  }, 3000);
-}
-</script>
-
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>

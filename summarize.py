@@ -15,20 +15,64 @@ GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_MODEL = "gemma4:e2b"  # đổi thành model bạn đã "ollama pull" sẵn
 
 MEETING_MINUTES_PROMPT = """\
-Bạn là trợ lý ghi biên bản cuộc họp. Dựa vào bản ghi âm (transcript) dưới đây, \
-hãy viết biên bản họp chuyên nghiệp, súc tích, gồm các phần:
+Bạn là chuyên viên văn phòng chịu trách nhiệm soạn thông báo kết luận cuộc họp \
+bằng tiếng Việt. Hãy chuyển transcript thành một báo cáo Markdown có bố cục \
+giống văn bản hành chính, nhưng nội dung phải thích nghi với chính cuộc họp này.
 
-1. Tóm tắt chung (2-3 câu)
-2. Các nội dung chính đã thảo luận (gạch đầu dòng)
-3. Quyết định đã chốt (nếu có)
-4. Việc cần làm tiếp theo / Action items (ai làm gì, nếu transcript có đề cập)
+NGUYÊN TẮC BẮT BUỘC
+- Tên báo cáo do người dùng nhập là: "{meeting_title}". Giữ nguyên chính tả và \
+  dùng đúng tên này ở dòng tiêu đề thứ hai; không tự viết lại hay rút gọn.
+- Transcript là nguồn sự thật duy nhất. Không tự đặt tên người, chức vụ, đơn vị, \
+  ngày giờ, địa điểm, số liệu, thời hạn, quyết định hoặc trạng thái hoàn thành.
+- Phân biệt rõ nội dung mới được thảo luận/đề xuất với quyết định đã được chốt.
+- Giữ đầy đủ mọi kết luận và nhiệm vụ khác nhau. Chỉ gộp các ý thực sự trùng lặp; \
+  độ dài báo cáo phải tỷ lệ với lượng thông tin của cuộc họp, không ép về một \
+  số đoạn cố định.
+- Với nhiệm vụ, giữ nguyên người/đơn vị chịu trách nhiệm, đơn vị phối hợp, thời hạn \
+  và điều kiện phụ thuộc nếu transcript có nêu. Nếu có nhiệm vụ nhưng không rõ \
+  người phụ trách, nhóm dưới tiêu đề "Chưa xác định người phụ trách".
+- Bỏ hẳn trường hoặc mục tùy chọn không có dữ liệu. Không điền nội dung của ví dụ \
+  và không dùng tên/số liệu của một cuộc họp khác.
+- Không tạo phần cơ quan ban hành, số công văn, nơi nhận hoặc chữ ký vì transcript \
+  thường không đủ dữ liệu pháp lý cho các trường này.
+- Ngoại trừ các tiêu đề Markdown và đoạn mở đầu hành chính, mọi ý nội dung từ \
+  "Đánh giá chung" trở đi phải là một mục danh sách Markdown bắt đầu bằng "- ". \
+  Nếu một ý có thời hạn, đơn vị phối hợp hoặc chi tiết phụ, dùng danh sách con \
+  thụt vào; không viết các ý thành đoạn văn rời không có dấu gạch đầu dòng.
 
-Transcript:
+KHUÔN ĐẦU RA
+# THÔNG BÁO
+## {meeting_title}
+
+Nếu transcript có đủ dữ liệu, viết đoạn mở đầu theo văn phong hành chính, lần lượt \
+nêu ngày họp, địa điểm, người chủ trì và thành phần tham dự. Bỏ chi tiết nào không \
+được nêu rõ thay vì dùng placeholder hoặc suy đoán.
+
+## Đánh giá chung:
+- [Tình hình, kết quả và số liệu quan trọng đã được phát biểu rõ ràng]
+- [Vấn đề, nguyên nhân, rủi ro và định hướng nếu transcript có nêu]
+
+Sau phần đánh giá, tạo trực tiếp một nhóm cho mỗi cá nhân/đơn vị được giao việc; \
+không thêm tiêu đề trung gian "Kết luận và giao nhiệm vụ". Ví dụ về HÌNH THỨC \
+(không phải nội dung để sao chép):
+
+### Giao [cá nhân hoặc đơn vị]:
+- [Nhiệm vụ cụ thể, có thể kiểm chứng từ transcript]
+  - **Thời hạn:** [chỉ ghi khi có]
+  - **Phối hợp:** [chỉ ghi khi có]
+
+## Nội dung khác:
+- [Chỉ tạo mục này nếu có thông tin quan trọng không thuộc đánh giá hoặc giao nhiệm vụ]
+
+Nếu không có quyết định hay nhiệm vụ nào được chốt, không tạo nhóm "Giao ..." và \
+phản ánh các đề xuất chưa chốt trong "Đánh giá chung" hoặc "Nội dung khác".
+
+TRANSCRIPT
 ---
 {transcript}
 ---
 
-Chỉ trả về biên bản họp, không thêm lời dẫn hay giải thích khác.
+Chỉ trả về Markdown của báo cáo, không dùng khối mã và không thêm lời dẫn hay giải thích.
 """
 
 
@@ -133,12 +177,17 @@ def summarize_transcript(
     transcript: str,
     model: str = DEFAULT_MODEL,
     use_gemini_api: bool = False,
+    meeting_title: str = "Kết luận cuộc họp",
 ) -> str:
     """Tạo biên bản họp từ transcript đầy đủ."""
     if not transcript.strip():
         return "(Không có nội dung transcript để tóm tắt.)"
 
-    prompt = MEETING_MINUTES_PROMPT.format(transcript=transcript)
+    normalized_title = meeting_title.strip() or "Kết luận cuộc họp"
+    prompt = MEETING_MINUTES_PROMPT.format(
+        transcript=transcript,
+        meeting_title=normalized_title,
+    )
     if use_gemini_api:
         return query_gemini(prompt)
     return query_ollama(prompt, model=model)

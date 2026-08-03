@@ -59,17 +59,33 @@
 
       <section class="upload-view" id="upload-view">
         <div class="intro">
-          <span class="eyebrow">Ghi chú cuộc họp bằng AI</span>
-          <h1>Từ bản ghi âm<br>đến ghi chú rõ ràng.</h1>
-          <p>Tải lên cuộc họp đã ghi âm. MeetNote sẽ tạo transcript và bản tóm
-             tắt mà bạn có thể chỉnh sửa trực tiếp bằng Markdown.</p>
+          <span class="eyebrow">HƯỚNG DẪN SỬ DỤNG</span>
+          <h1>Tạo báo cáo<br>cuộc họp.</h1>
+          <ol class="guide-steps">
+            <li><span>1</span><div><strong>Đặt tên báo cáo</strong>
+              <p>Tên này được dùng nguyên văn trong tiêu đề Word và lịch sử.</p></div></li>
+            <li><span>2</span><div><strong>Chọn bản ghi âm</strong>
+              <p>Tải file lên và chọn model transcript phù hợp.</p></div></li>
+            <li><span>3</span><div><strong>Kiểm tra nội dung</strong>
+              <p>Sửa trực tiếp transcript và tóm tắt bằng Markdown.</p></div></li>
+            <li><span>4</span><div><strong>Xuất báo cáo Word</strong>
+              <p>File sử dụng mẫu hành chính của Công ty Truyền tải điện 1.</p></div></li>
+          </ol>
         </div>
 
         <div class="upload-card" id="upload-card">
           <div class="card-heading">
-            <div><small>BƯỚC 1</small><h2>Chọn bản ghi âm</h2></div>
+            <div><small>CUỘC HỌP MỚI</small><h2>Đặt tên & chọn bản ghi âm</h2></div>
             <span>Tối đa 2 GB</span>
           </div>
+
+          <label class="text-field">
+            <span>Tên báo cáo</span>
+            <input id="meeting-title-input" type="text" maxlength="180"
+                   placeholder="Ví dụ: Kết luận cuộc họp giao ban tháng 8/2026"
+                   autocomplete="off">
+            <small>Nhập đầy đủ tiêu đề muốn xuất hiện dưới dòng “THÔNG BÁO”.</small>
+          </label>
 
           <button class="drop-zone" id="drop-zone" type="button">
             <span class="drop-icon">
@@ -111,6 +127,10 @@
             <p id="meeting-meta"></p>
           </div>
           <div class="meeting-actions">
+            <button class="secondary-button" id="word-download-button" type="button">
+              <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
+              Tải .docx
+            </button>
             <button class="secondary-button" id="download-button" type="button">
               <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
               Tải .md

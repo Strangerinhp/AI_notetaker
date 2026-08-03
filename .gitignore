@@ -1,0 +1,38 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local configuration
+.venv/
+venv/
+env/
+env_*/
+.env
+.env.*
+!.env.example
+
+# Flask/runtime output
+uploads/
+temp_segments/
+results/
+*.log
+*.pid
+
+# Temporary Word export and QA artifacts
+.docx_template_work/
+.docx_format_qa/
+~$*.docx
+*.tmp
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

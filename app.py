@@ -12,6 +12,8 @@ Sau đó mở trình duyệt: http://localhost:5001
 """
 
 import argparse
+import io
+import json
 import os
 import re
 import shutil
@@ -19,7 +21,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from audio_utils import cleanup_files, split_audio
@@ -78,7 +80,13 @@ def strip_transcript_timestamps(transcript: str) -> str:
     )
 
 
-def process_audio_file(file_path: str, job_id: str, transcribe_engine: str = "whisper") -> None:
+def process_audio_file(
+    file_path: str,
+    job_id: str,
+    transcribe_engine: str = "whisper",
+    meeting_title: str = "Kết luận cuộc họp",
+    original_filename: str = "",
+) -> None:
     """Pipeline chạy nền: cắt audio -> transcribe từng đoạn -> tóm tắt."""
     segment_dir = os.path.join(TEMP_FOLDER, job_id)
     segment_paths = []
@@ -123,20 +131,27 @@ def process_audio_file(file_path: str, job_id: str, transcribe_engine: str = "wh
                 segment_paths, language=WHISPER_LANGUAGE, progress_callback=on_progress
             )
 
+        # Một số engine (đặc biệt NghiASR) có thể trả về toàn bộ chữ in hoa.
+        # Chuẩn hóa một lần tại đây để transcript hiển thị và lưu dưới dạng chữ thường.
+        transcript = transcript.lower()
+
         update_job(job_id, status="summarizing", message="Đang tóm tắt thành biên bản họp...")
         minutes = summarize_transcript(
             strip_transcript_timestamps(transcript),
             model=OLLAMA_MODEL,
             use_gemini_api=app.config["USE_GEMINI_API"],
+            meeting_title=meeting_title,
         )
 
         # Lưu kết quả ra file để tiện tải về / xem lại sau
-        result_path = os.path.join(RESULTS_FOLDER, f"{job_id}.txt")
-        with open(result_path, "w", encoding="utf-8") as f:
-            f.write("=== BIÊN BẢN HỌP ===\n\n")
-            f.write(minutes)
-            f.write("\n\n=== TRANSCRIPT ĐẦY ĐỦ ===\n\n")
-            f.write(transcript)
+        with results_lock:
+            _write_result(job_id, minutes, transcript)
+            _write_result_metadata(
+                job_id,
+                title=meeting_title,
+                filename=original_filename,
+                engine=transcribe_engine,
+            )
 
         update_job(
             job_id,
@@ -177,7 +192,14 @@ def upload_file():
         return jsonify({"error": f"Định dạng file không được hỗ trợ. "
                                   f"Hỗ trợ: {', '.join(sorted(ALLOWED_EXTENSIONS))}"}), 400
 
+    meeting_title = " ".join(request.form.get("title", "").split())
+    if not meeting_title:
+        return jsonify({"error": "Vui lòng nhập tên báo cáo"}), 400
+    if len(meeting_title) > 180:
+        return jsonify({"error": "Tên báo cáo không được vượt quá 180 ký tự"}), 400
+
     job_id = str(uuid.uuid4())
+    original_filename = file.filename
     filename = secure_filename(file.filename)
     stored_name = f"{job_id}_{filename}"
     file_path = os.path.join(app.config["UPLOAD_FOLDER"], stored_name)
@@ -193,9 +215,19 @@ def upload_file():
             "status": "queued",
             "message": "Đang chờ xử lý...",
             "filename": filename,
+            "title": meeting_title,
         }
 
-    thread = threading.Thread(target=process_audio_file, args=(file_path, job_id, transcribe_engine))
+    thread = threading.Thread(
+        target=process_audio_file,
+        args=(
+            file_path,
+            job_id,
+            transcribe_engine,
+            meeting_title,
+            original_filename,
+        ),
+    )
     thread.daemon = True
     thread.start()
 
@@ -226,6 +258,47 @@ def _result_path(result_id: str) -> str | None:
     return os.path.join(RESULTS_FOLDER, f"{result_id}.txt")
 
 
+def _metadata_path(result_id: str) -> str | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", result_id):
+        return None
+    return os.path.join(RESULTS_FOLDER, f"{result_id}.json")
+
+
+def _read_result_metadata(result_id: str) -> dict:
+    path = _metadata_path(result_id)
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as source:
+            metadata = json.load(source)
+        return metadata if isinstance(metadata, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_result_metadata(
+    result_id: str,
+    *,
+    title: str,
+    filename: str,
+    engine: str,
+) -> None:
+    path = _metadata_path(result_id)
+    if not path:
+        raise ValueError("Meeting ID không hợp lệ")
+    temporary_path = f"{path}.tmp"
+    metadata = {
+        "title": title,
+        "filename": filename,
+        "engine": engine,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(temporary_path, "w", encoding="utf-8", newline="\n") as output:
+        json.dump(metadata, output, ensure_ascii=False, indent=2)
+        output.write("\n")
+    os.replace(temporary_path, path)
+
+
 def _read_result(result_id: str) -> dict | None:
     path = _result_path(result_id)
     if not path or not os.path.isfile(path):
@@ -239,12 +312,19 @@ def _read_result(result_id: str) -> dict | None:
     )
     summary = summary_part.replace("=== BIÊN BẢN HỌP ===", "", 1).strip()
 
-    title = f"Cuộc họp {datetime.fromtimestamp(os.path.getmtime(path)):%d/%m/%Y}"
-    for line in summary.splitlines():
-        candidate = line.strip().lstrip("#>").replace("**", "").strip(" *_`")
-        if candidate and candidate != "---":
-            title = candidate[:120]
-            break
+    metadata = _read_result_metadata(result_id)
+    title = str(metadata.get("title") or "").strip()
+    if not title:
+        title = f"Cuộc họp {datetime.fromtimestamp(os.path.getmtime(path)):%d/%m/%Y}"
+        for line in summary.splitlines():
+            candidate = line.strip().lstrip("#>").replace("**", "").strip(" *_`")
+            if (
+                candidate
+                and candidate != "---"
+                and candidate.upper() != "THÔNG BÁO"
+            ):
+                title = candidate[:180]
+                break
 
     timestamp = datetime.fromtimestamp(
         os.path.getmtime(path), tz=timezone.utc
@@ -252,9 +332,9 @@ def _read_result(result_id: str) -> dict | None:
     return {
         "id": result_id,
         "title": title,
-        "filename": "",
-        "engine": "",
-        "created_at": timestamp,
+        "filename": str(metadata.get("filename") or ""),
+        "engine": str(metadata.get("engine") or ""),
+        "created_at": str(metadata.get("created_at") or timestamp),
         "updated_at": timestamp,
         "summary": summary,
         "transcript": transcript.strip(),
@@ -317,6 +397,51 @@ def update_meeting(result_id):
         _write_result(result_id, summary, transcript)
         meeting = _read_result(result_id)
     return jsonify(meeting)
+
+
+@app.route("/api/meetings/<result_id>/word")
+def export_meeting_word(result_id):
+    document_type = request.args.get("document", "summary")
+    if document_type not in {"summary", "transcript"}:
+        return jsonify({"error": "Loại tài liệu không hợp lệ"}), 400
+
+    with results_lock:
+        meeting = _read_result(result_id)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+
+    try:
+        # Import lazily so transcription still starts with a clear error when
+        # dependencies have not yet been installed from requirements.txt.
+        from document_export import export_markdown_to_docx
+
+        output = io.BytesIO()
+        export_markdown_to_docx(
+            meeting[document_type],
+            output,
+            title=meeting["title"],
+            document_type=document_type,
+        )
+        output.seek(0)
+    except ImportError as error:
+        return jsonify({
+            "error": "Thiếu python-docx. Hãy chạy: pip install -r requirements.txt"
+        }), 500
+    except Exception as error:
+        return jsonify({"error": f"Không thể tạo file Word: {error}"}), 500
+
+    safe_title = re.sub(
+        r'[<>:"/\\|?*\x00-\x1f]+', "_", meeting["title"]
+    ).strip(" ._")[:80] or "cuoc-hop"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f"{safe_title}.{document_type}.docx",
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        max_age=0,
+    )
 
 
 def parse_args():

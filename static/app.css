@@ -15,7 +15,7 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--bg); }
+html { min-width: 1020px; background: var(--bg); }
 body {
   margin: 0;
   min-height: 100vh;
@@ -135,16 +135,28 @@ svg {
 
 .upload-view {
   max-width: 1120px; display: grid; grid-template-columns: .8fr 1.2fr; gap: clamp(45px,7vw,88px);
-  align-items: center; margin: 0 auto; padding: clamp(55px,8vh,95px) 42px 70px;
+  align-items: stretch; min-height: calc(100vh - 70px); margin: 0 auto;
+  padding: clamp(42px,7vh,76px) 42px 58px;
 }
 .intro .eyebrow, .card-heading small, .processing-card small {
   color: var(--blue); font-size: 9px; font-weight: 850; letter-spacing: .12em;
 }
-.intro h1 {
-  max-width: 520px; margin: 15px 0 18px; font-size: clamp(43px,5vw,66px);
-  font-weight: 650; letter-spacing: -.058em; line-height: .99;
+.intro {
+  align-self: stretch; display: flex; flex-direction: column; justify-content: center;
+  padding: 16px 0;
 }
-.intro p { max-width: 455px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+.intro h1 {
+  max-width: 430px; margin: 14px 0 28px; font-size: clamp(34px,3.5vw,48px);
+  font-weight: 650; letter-spacing: -.05em; line-height: 1.02;
+}
+.guide-steps { display: grid; gap: 18px; margin: 0; padding: 0; list-style: none; }
+.guide-steps li { display: grid; grid-template-columns: 29px minmax(0,1fr); gap: 12px; align-items: start; }
+.guide-steps li > span {
+  width: 29px; height: 29px; display: grid; place-items: center; color: var(--blue);
+  background: var(--blue-soft); border-radius: 9px; font-size: 10px; font-weight: 850;
+}
+.guide-steps strong { display: block; margin-top: 1px; font-size: 11px; }
+.guide-steps p { max-width: 330px; margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
 
 .upload-card, .processing-card, .editor {
   background: white; border: 1px solid var(--line); border-radius: 17px;
@@ -157,6 +169,15 @@ svg {
   padding: 5px 8px; color: var(--faint); background: #f7f7f5;
   border: 1px solid var(--line); border-radius: 20px; font-size: 8px; font-weight: 700;
 }
+.text-field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+.text-field > span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.text-field input {
+  width: 100%; height: 43px; padding: 0 12px; color: var(--text); background: #f8f8f6;
+  border: 1px solid var(--line); border-radius: 9px; outline: none; font-size: 11px;
+}
+.text-field input::placeholder { color: #aaa9a2; }
+.text-field input:focus { background: white; border-color: #a4afe8; box-shadow: 0 0 0 3px var(--blue-soft); }
+.text-field small { color: var(--faint); font-size: 8px; line-height: 1.45; }
 .drop-zone {
   width: 100%; min-height: 210px; display: flex; flex-direction: column;
   align-items: center; justify-content: center; padding: 25px; color: var(--text);
@@ -318,26 +339,22 @@ svg {
 @keyframes toast { from { opacity: 0; transform: translateY(7px); } }
 
 @media (max-width: 950px) {
-  .sidebar { transform: translateX(-100%); transition: transform .2s ease; }
-  body.sidebar-open .sidebar { transform: translateX(0); }
-  .mobile-only, .menu-button { display: grid; }
-  .backdrop {
-    position: fixed; inset: 0; z-index: 25; display: block; visibility: hidden;
-    padding: 0; background: rgba(20,20,18,.35); border: 0; opacity: 0; transition: .2s ease;
+  :root { --side-width: 250px; }
+  .mobile-only, .menu-button, .backdrop { display: none !important; }
+  .sidebar { transform: none !important; }
+  .main { margin-left: var(--side-width); }
+  .upload-view {
+    max-width: 800px; grid-template-columns: minmax(210px,.72fr) minmax(390px,1.28fr);
+    gap: 28px; padding-inline: 26px;
   }
-  body.sidebar-open .backdrop { visibility: visible; opacity: 1; }
-  .main { margin-left: 0; }
-  .upload-view { max-width: 680px; grid-template-columns: 1fr; gap: 34px; }
-  .processing-card { grid-column: 1; }
-  .intro { text-align: center; }
-  .intro p { margin-inline: auto; }
+  .processing-card { grid-column: 2; }
 }
 
 @media (max-width: 650px) {
   .topbar { height: 61px; padding: 0 14px; }
   .save-status b { display: none; }
   .upload-view { padding: 38px 15px 45px; }
-  .intro h1 { font-size: 41px; }
+  .intro h1 { font-size: 32px; }
   .meeting-view { padding: 24px 13px 40px; }
   .meeting-heading { flex-direction: column; }
   .meeting-heading h1 { font-size: 28px; }

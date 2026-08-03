@@ -30,6 +30,7 @@
     uploadCard: $("upload-card"),
     processingCard: $("processing-card"),
     dropZone: $("drop-zone"),
+    meetingTitleInput: $("meeting-title-input"),
     fileInput: $("file-input"),
     fileName: $("file-name"),
     fileDetail: $("file-detail"),
@@ -46,6 +47,7 @@
     editorBody: $("editor-body"),
     saveButton: $("save-button"),
     downloadButton: $("download-button"),
+    wordDownloadButton: $("word-download-button"),
     toasts: $("toasts"),
   };
 
@@ -269,11 +271,11 @@
   }
 
   async function saveMeeting(silent = false) {
-    if (!state.current) return;
+    if (!state.current) return false;
     storeEditorValue();
     if (state.saving) {
       state.saveAgain = true;
-      return;
+      return false;
     }
 
     state.saving = true;
@@ -295,9 +297,11 @@
       setSaveStatus("saved", "Đã lưu");
       await loadHistory();
       if (!silent) toast("Đã lưu thay đổi.");
+      return true;
     } catch (error) {
       setSaveStatus("error", "Lưu thất bại");
       toast(`Không thể lưu: ${error.message}`, true);
+      return false;
     } finally {
       state.saving = false;
       if (state.saveAgain) {
@@ -316,7 +320,11 @@
     ui.fileName.textContent = file.name;
     ui.fileDetail.textContent =
       `${(file.size / 1024 / 1024).toFixed(1)} MB · Bấm để chọn file khác`;
-    ui.uploadButton.disabled = false;
+    updateUploadButtonState();
+  }
+
+  function updateUploadButtonState() {
+    ui.uploadButton.disabled = !state.file || !ui.meetingTitleInput.value.trim();
   }
 
   function setProgress(status, message) {
@@ -335,13 +343,18 @@
   }
 
   async function upload() {
-    if (!state.file) return;
+    const meetingTitle = ui.meetingTitleInput.value.trim();
+    if (!state.file || !meetingTitle) {
+      toast("Vui lòng nhập tên báo cáo và chọn bản ghi âm.", true);
+      return;
+    }
     ui.uploadCard.classList.add("hidden");
     ui.processingCard.classList.remove("hidden");
     setProgress("uploading");
     const form = new FormData();
     form.append("file", state.file);
     form.append("engine", ui.engine.value);
+    form.append("title", meetingTitle);
 
     try {
       const payload = await api("/upload", { method: "POST", body: form });
@@ -382,6 +395,7 @@
 
   function resetUpload() {
     state.file = null;
+    ui.meetingTitleInput.value = "";
     ui.fileInput.value = "";
     ui.dropZone.classList.remove("selected");
     ui.dropZone.querySelector(".drop-icon").innerHTML =
@@ -460,6 +474,50 @@
     URL.revokeObjectURL(url);
   }
 
+  async function downloadWordDocument() {
+    if (!state.current) return;
+    storeEditorValue();
+    if (state.saveTimer) {
+      window.clearTimeout(state.saveTimer);
+      state.saveTimer = null;
+    }
+
+    try {
+      while (state.saving) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      const saved = await saveMeeting(true);
+      if (!saved) {
+        throw new Error("Chưa lưu được nội dung mới nhất.");
+      }
+      while (state.saving) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+
+      const response = await fetch(
+        `/api/meetings/${encodeURIComponent(state.current.id)}/word?document=${encodeURIComponent(state.document)}`,
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Lỗi máy chủ (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const title = state.current.title
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+        .slice(0, 80);
+      link.href = url;
+      link.download = `${title}.${state.document}.docx`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("Đã tạo file Word.");
+    } catch (error) {
+      toast(`Không thể tải Word: ${error.message}`, true);
+    }
+  }
+
   function bindEvents() {
     ui.menu.addEventListener("click", () => document.body.classList.add("sidebar-open"));
     ui.closeSidebar.addEventListener("click", closeSidebar);
@@ -469,6 +527,7 @@
 
     ui.dropZone.addEventListener("click", () => ui.fileInput.click());
     ui.fileInput.addEventListener("change", () => selectFile(ui.fileInput.files[0]));
+    ui.meetingTitleInput.addEventListener("input", updateUploadButtonState);
     ui.dropZone.addEventListener("dragover", (event) => {
       event.preventDefault();
       ui.dropZone.classList.add("drag");
@@ -502,6 +561,7 @@
     });
     ui.saveButton.addEventListener("click", () => saveMeeting());
     ui.downloadButton.addEventListener("click", downloadDocument);
+    ui.wordDownloadButton.addEventListener("click", downloadWordDocument);
     document.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();

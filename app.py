@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
-from audio_utils import cleanup_files, split_audio
+from audio_utils import cleanup_files, split_audio_files
 from summarize import GEMINI_MODEL, summarize_transcript
 from transcribe_whisper import transcribe_segments as transcribe_whisper
 from transcribe_gemma import transcribe_segments as transcribe_gemma
@@ -52,7 +52,7 @@ for folder in (UPLOAD_FOLDER, TEMP_FOLDER, RESULTS_FOLDER):
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["USE_GEMINI_API"] = False
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # giới hạn 2GB / file
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # tổng request tối đa 2 GB
 
 # Lưu trạng thái các job trong bộ nhớ. Với nhu cầu production nhiều người dùng
 # đồng thời, nên thay bằng Redis/SQLite thay vì dict trong RAM.
@@ -80,26 +80,31 @@ def strip_transcript_timestamps(transcript: str) -> str:
     )
 
 
-def process_audio_file(
-    file_path: str,
+def process_audio_files(
+    file_paths: list[str],
     job_id: str,
     transcribe_engine: str = "whisper",
     meeting_title: str = "Kết luận cuộc họp",
     original_filename: str = "",
 ) -> None:
-    """Pipeline chạy nền: cắt audio -> transcribe từng đoạn -> tóm tắt."""
+    """Pipeline: ghép audio theo thứ tự -> chia đoạn -> transcribe -> tóm tắt."""
     segment_dir = os.path.join(TEMP_FOLDER, job_id)
     segment_paths = []
 
     try:
-        update_job(job_id, status="splitting", message="Đang chia nhỏ file audio...")
+        splitting_message = (
+            f"Đang ghép {len(file_paths)} file và chia nhỏ audio..."
+            if len(file_paths) > 1
+            else "Đang chia nhỏ file audio..."
+        )
+        update_job(job_id, status="splitting", message=splitting_message)
         segment_minutes = (
             NGHIASR_SEGMENT_MINUTES
             if transcribe_engine == "nghiasr"
             else SEGMENT_MINUTES
         )
-        segment_paths = split_audio(
-            file_path,
+        segment_paths = split_audio_files(
+            file_paths,
             segment_dir,
             segment_minutes=segment_minutes,
         )
@@ -168,10 +173,7 @@ def process_audio_file(
         # Dọn dẹp file tạm dù thành công hay lỗi
         cleanup_files(segment_paths)
         shutil.rmtree(segment_dir, ignore_errors=True)
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
+        cleanup_files(file_paths)
 
 
 @app.route("/")
@@ -181,16 +183,24 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    if "file" not in request.files:
-        return jsonify({"error": "Không tìm thấy file trong request"}), 400
+    files = request.files.getlist("files")
+    if not files:
+        # Giữ tương thích với giao diện/client cũ chỉ gửi một trường "file".
+        files = request.files.getlist("file")
+    files = [file for file in files if file and file.filename]
+    if not files:
+        return jsonify({"error": "Chưa chọn file audio"}), 400
 
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "Chưa chọn file"}), 400
-
-    if not allowed_file(file.filename):
-        return jsonify({"error": f"Định dạng file không được hỗ trợ. "
-                                  f"Hỗ trợ: {', '.join(sorted(ALLOWED_EXTENSIONS))}"}), 400
+    unsupported_files = [
+        file.filename for file in files if not allowed_file(file.filename)
+    ]
+    if unsupported_files:
+        return jsonify({
+            "error": (
+                f"Định dạng file không được hỗ trợ: {', '.join(unsupported_files)}. "
+                f"Hỗ trợ: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+            )
+        }), 400
 
     meeting_title = " ".join(request.form.get("title", "").split())
     if not meeting_title:
@@ -199,11 +209,22 @@ def upload_file():
         return jsonify({"error": "Tên báo cáo không được vượt quá 180 ký tự"}), 400
 
     job_id = str(uuid.uuid4())
-    original_filename = file.filename
-    filename = secure_filename(file.filename)
-    stored_name = f"{job_id}_{filename}"
-    file_path = os.path.join(app.config["UPLOAD_FOLDER"], stored_name)
-    file.save(file_path)
+    original_filenames = [file.filename for file in files]
+    original_filename = " → ".join(original_filenames)
+    file_paths = []
+    stored_filenames = []
+    try:
+        for index, file in enumerate(files, start=1):
+            extension = file.filename.rsplit(".", 1)[1].lower()
+            filename = secure_filename(file.filename) or f"audio_{index}.{extension}"
+            stored_name = f"{job_id}_{index:03d}_{filename}"
+            file_path = os.path.join(app.config["UPLOAD_FOLDER"], stored_name)
+            file.save(file_path)
+            file_paths.append(file_path)
+            stored_filenames.append(filename)
+    except OSError as error:
+        cleanup_files(file_paths)
+        return jsonify({"error": f"Không thể lưu file tải lên: {error}"}), 500
 
     # Lấy engine transcribe từ form data (mặc định whisper)
     transcribe_engine = request.form.get("engine", "whisper")
@@ -214,14 +235,15 @@ def upload_file():
         jobs[job_id] = {
             "status": "queued",
             "message": "Đang chờ xử lý...",
-            "filename": filename,
+            "filename": " → ".join(stored_filenames),
+            "file_count": len(file_paths),
             "title": meeting_title,
         }
 
     thread = threading.Thread(
-        target=process_audio_file,
+        target=process_audio_files,
         args=(
-            file_path,
+            file_paths,
             job_id,
             transcribe_engine,
             meeting_title,

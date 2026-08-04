@@ -5,7 +5,7 @@
     meetings: [],
     current: null,
     document: "summary",
-    file: null,
+    files: [],
     poll: null,
     saveTimer: null,
     saving: false,
@@ -311,20 +311,24 @@
     }
   }
 
-  function selectFile(file) {
-    if (!file) return;
-    state.file = file;
+  function selectFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    state.files = files;
     ui.dropZone.classList.add("selected");
     ui.dropZone.querySelector(".drop-icon").innerHTML =
       '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>';
-    ui.fileName.textContent = file.name;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    ui.fileName.textContent = files.length === 1
+      ? files[0].name
+      : `${files.length} đoạn audio · ${(totalSize / 1024 / 1024).toFixed(1)} MB`;
     ui.fileDetail.textContent =
-      `${(file.size / 1024 / 1024).toFixed(1)} MB · Bấm để chọn file khác`;
+      `Thứ tự ghép: ${files.map((file, index) => `${index + 1}. ${file.name}`).join(" → ")}`;
     updateUploadButtonState();
   }
 
   function updateUploadButtonState() {
-    ui.uploadButton.disabled = !state.file || !ui.meetingTitleInput.value.trim();
+    ui.uploadButton.disabled = !state.files.length || !ui.meetingTitleInput.value.trim();
   }
 
   function setProgress(status, message) {
@@ -344,7 +348,7 @@
 
   async function upload() {
     const meetingTitle = ui.meetingTitleInput.value.trim();
-    if (!state.file || !meetingTitle) {
+    if (!state.files.length || !meetingTitle) {
       toast("Vui lòng nhập tên báo cáo và chọn bản ghi âm.", true);
       return;
     }
@@ -352,7 +356,7 @@
     ui.processingCard.classList.remove("hidden");
     setProgress("uploading");
     const form = new FormData();
-    form.append("file", state.file);
+    state.files.forEach((file) => form.append("files", file));
     form.append("engine", ui.engine.value);
     form.append("title", meetingTitle);
 
@@ -394,13 +398,13 @@
   }
 
   function resetUpload() {
-    state.file = null;
+    state.files = [];
     ui.meetingTitleInput.value = "";
     ui.fileInput.value = "";
     ui.dropZone.classList.remove("selected");
     ui.dropZone.querySelector(".drop-icon").innerHTML =
       '<svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>';
-    ui.fileName.textContent = "Thả file vào đây hoặc bấm để chọn";
+    ui.fileName.textContent = "Thả các file vào đây hoặc bấm để chọn";
     ui.fileDetail.textContent = "MP3, WAV, M4A, MP4, OGG, FLAC hoặc WEBM";
     ui.uploadButton.disabled = true;
     ui.uploadCard.classList.remove("hidden");
@@ -526,7 +530,7 @@
     ui.historySearch.addEventListener("input", renderHistory);
 
     ui.dropZone.addEventListener("click", () => ui.fileInput.click());
-    ui.fileInput.addEventListener("change", () => selectFile(ui.fileInput.files[0]));
+    ui.fileInput.addEventListener("change", () => selectFiles(ui.fileInput.files));
     ui.meetingTitleInput.addEventListener("input", updateUploadButtonState);
     ui.dropZone.addEventListener("dragover", (event) => {
       event.preventDefault();
@@ -536,7 +540,7 @@
     ui.dropZone.addEventListener("drop", (event) => {
       event.preventDefault();
       ui.dropZone.classList.remove("drag");
-      selectFile(event.dataTransfer.files[0]);
+      selectFiles(event.dataTransfer.files);
     });
     ui.uploadButton.addEventListener("click", upload);
 

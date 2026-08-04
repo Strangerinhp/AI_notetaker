@@ -26,7 +26,7 @@ import whisper
 # ============================================================
 # Các model Whisper: "tiny", "base", "small", "medium", "large-v3"
 # Model lớn hơn → chính xác hơn nhưng chậm hơn, tốn RAM hơn
-DEFAULT_MODEL_SIZE = "medium"
+DEFAULT_MODEL_SIZE = "large-v3"
 
 
 # ============================================================

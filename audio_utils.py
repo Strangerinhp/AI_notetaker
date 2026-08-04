@@ -134,6 +134,110 @@ def split_audio(audio_path, temp_dir, segment_minutes=10):
     return chunk_paths
 
 
+def split_audio_files(audio_paths, temp_dir, segment_minutes=10):
+    """Concatenate audio files in order, then split the combined stream.
+
+    Every input is decoded and normalized to mono 16 kHz PCM before FFmpeg's
+    concat filter joins it.  Segmentation happens in the same FFmpeg pass, so
+    no large intermediate combined recording is written to disk.
+    """
+    if segment_minutes <= 0:
+        raise ValueError("segment_minutes must be greater than zero.")
+
+    input_paths = [os.path.abspath(os.fspath(path)) for path in audio_paths]
+    if not input_paths:
+        raise ValueError("At least one audio file is required.")
+    for input_path in input_paths:
+        if not os.path.isfile(input_path):
+            raise FileNotFoundError(f"Audio file not found: {input_path}")
+
+    if len(input_paths) == 1:
+        return split_audio(
+            input_paths[0],
+            temp_dir,
+            segment_minutes=segment_minutes,
+        )
+
+    output_dir = os.path.abspath(os.fspath(temp_dir))
+    os.makedirs(output_dir, exist_ok=True)
+    output_prefix = "combined_part"
+    output_pattern = os.path.join(output_dir, f"{output_prefix}%03d.wav")
+    segment_seconds = float(segment_minutes) * 60
+    segment_time = f"{segment_seconds:.6f}".rstrip("0").rstrip(".")
+
+    command = [
+        _find_ffmpeg(),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+    ]
+    for input_path in input_paths:
+        command.extend(["-i", input_path])
+
+    normalized_streams = []
+    stream_labels = []
+    for index in range(len(input_paths)):
+        label = f"audio{index}"
+        normalized_streams.append(
+            f"[{index}:a:0]aresample={TARGET_SAMPLE_RATE},"
+            f"aformat=sample_fmts=s16:channel_layouts=mono,"
+            f"asetpts=PTS-STARTPTS[{label}]"
+        )
+        stream_labels.append(f"[{label}]")
+    concat_filter = (
+        "".join(stream_labels)
+        + f"concat=n={len(input_paths)}:v=0:a=1[combined]"
+    )
+
+    command.extend([
+        "-filter_complex",
+        ";".join([*normalized_streams, concat_filter]),
+        "-map",
+        "[combined]",
+        "-vn",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "segment",
+        "-segment_time",
+        segment_time,
+        "-segment_start_number",
+        "1",
+        "-reset_timestamps",
+        "1",
+        output_pattern,
+    ])
+
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        creationflags=creation_flags,
+        check=False,
+    )
+    if result.returncode != 0:
+        details = result.stderr.strip() or "FFmpeg returned no error details."
+        raise RuntimeError(f"Audio concatenation and splitting failed: {details}")
+
+    chunk_paths = [
+        os.path.join(output_dir, file_name)
+        for file_name in os.listdir(output_dir)
+        if file_name.startswith(output_prefix)
+        and file_name.endswith(".wav")
+        and file_name[len(output_prefix) : -4].isdigit()
+    ]
+    chunk_paths.sort(key=_chunk_sort_key)
+    if not chunk_paths:
+        raise RuntimeError(
+            "Audio concatenation and splitting failed: FFmpeg did not create "
+            "any WAV chunks."
+        )
+    return chunk_paths
+
+
 def cleanup_files(paths):
     for path in paths:
         try:

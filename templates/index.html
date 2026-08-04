@@ -65,7 +65,7 @@
             <li><span>1</span><div><strong>Đặt tên báo cáo</strong>
               <p>Tên này được dùng nguyên văn trong tiêu đề Word và lịch sử.</p></div></li>
             <li><span>2</span><div><strong>Chọn bản ghi âm</strong>
-              <p>Tải file lên và chọn model transcript phù hợp.</p></div></li>
+              <p>Tải một hoặc nhiều file theo đúng thứ tự cuộc họp và chọn model transcript.</p></div></li>
             <li><span>3</span><div><strong>Kiểm tra nội dung</strong>
               <p>Sửa trực tiếp transcript và tóm tắt bằng Markdown.</p></div></li>
             <li><span>4</span><div><strong>Xuất báo cáo Word</strong>
@@ -76,7 +76,7 @@
         <div class="upload-card" id="upload-card">
           <div class="card-heading">
             <div><small>CUỘC HỌP MỚI</small><h2>Đặt tên & chọn bản ghi âm</h2></div>
-            <span>Tối đa 2 GB</span>
+            <span>Tổng tối đa 2 GB</span>
           </div>
 
           <label class="text-field">
@@ -91,9 +91,9 @@
             <span class="drop-icon">
               <svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
             </span>
-            <strong id="file-name">Thả file vào đây hoặc bấm để chọn</strong>
+            <strong id="file-name">Thả các file vào đây hoặc bấm để chọn</strong>
             <small id="file-detail">MP3, WAV, M4A, MP4, OGG, FLAC hoặc WEBM</small>
-            <input id="file-input" type="file" hidden
+            <input id="file-input" type="file" hidden multiple
                    accept=".mp3,.wav,.m4a,.mp4,.ogg,.flac,.webm,audio/*,video/mp4">
           </button>
 

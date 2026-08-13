@@ -9,3 +9,5 @@ sherpa-onnx
 soundfile
 werkzeug
 imageio-ffmpeg
+pyodbc>=5,<6
+pyannote.audio>=4,<5

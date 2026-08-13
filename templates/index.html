@@ -106,6 +106,33 @@
             </select>
           </label>
 
+          <section class="diarization-card" aria-labelledby="diarization-title">
+            <label class="toggle-field">
+              <span>
+                <strong id="diarization-title">Tách người nói</strong>
+                <small id="diarization-note">Dùng pyannote trước khi chạy Whisper hoặc NghiASR.</small>
+              </span>
+              <input id="diarization-enabled" type="checkbox" role="switch">
+            </label>
+            <div class="diarization-options hidden" id="diarization-options">
+              <label class="number-field">
+                <span>Số người nói</span>
+                <input id="speaker-count" type="number" min="1" max="20"
+                       step="1" inputmode="numeric" placeholder="Tự động">
+                <small>Để trống nếu không biết chính xác.</small>
+              </label>
+              <label class="number-field">
+                <span>Lượt nói tối thiểu</span>
+                <span class="number-with-unit">
+                  <input id="min-speaker-turn" type="number" min="0" max="10"
+                         step="0.1" inputmode="decimal" value="2.0">
+                  <i>giây</i>
+                </span>
+                <small>Lượt ngắn hơn ngưỡng này sẽ không được gửi sang model transcript.</small>
+              </label>
+            </div>
+          </section>
+
           <button class="primary-button" id="upload-button" type="button" disabled>
             Bắt đầu xử lý
             <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>

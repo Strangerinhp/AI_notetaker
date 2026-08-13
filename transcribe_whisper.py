@@ -21,6 +21,8 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 import torch
 import whisper
 
+from speaker_diarization import SpeakerTurn, format_speaker_turn
+
 # ============================================================
 # CẤU HÌNH
 # ============================================================
@@ -112,3 +114,20 @@ def transcribe_segments(segment_paths: list[str], language: str = None,
             progress_callback(idx, total)
 
     return "\n".join(full_text_parts)
+
+
+def transcribe_diarized_segments(
+    turns: list[SpeakerTurn],
+    language: str = None,
+    progress_callback=None,
+) -> str:
+    """Transcribe pyannote turns and retain speaker/time attribution."""
+    lines = []
+    total = len(turns)
+    for index, turn in enumerate(turns, start=1):
+        text = transcribe_segment(turn.path, language=language)
+        if text:
+            lines.append(format_speaker_turn(turn, text))
+        if progress_callback:
+            progress_callback(index, total)
+    return "\n".join(lines)

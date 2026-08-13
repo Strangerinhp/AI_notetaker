@@ -13,7 +13,6 @@ Sau đó mở trình duyệt: http://localhost:5001
 
 import argparse
 import io
-import json
 import os
 import re
 import shutil
@@ -25,18 +24,31 @@ from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from audio_utils import cleanup_files, split_audio_files
+from database import (
+    DatabaseError,
+    check_database,
+    complete_meeting,
+    get_meeting,
+    get_meetings,
+    insert_meeting,
+    update_meeting as save_meeting,
+    update_meeting_status,
+)
 from summarize import GEMINI_MODEL, summarize_transcript
-from transcribe_whisper import transcribe_segments as transcribe_whisper
+from transcribe_whisper import (
+    transcribe_diarized_segments as transcribe_whisper_diarized,
+    transcribe_segments as transcribe_whisper,
+)
 from transcribe_gemma import transcribe_segments as transcribe_gemma
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 TEMP_FOLDER = os.path.join(BASE_DIR, "temp_segments")
-RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "ogg", "flac", "webm"}
 SEGMENT_MINUTES = 2
 NGHIASR_SEGMENT_MINUTES = 0.5
+DEFAULT_MIN_SPEAKER_TURN_SECONDS = 2.0
 WHISPER_LANGUAGE = "vi"  # None = tự nhận diện ngôn ngữ; đặt "vi" nếu luôn là tiếng Việt
 OLLAMA_MODEL = "gemma4:e2b"  # đổi theo model bạn đã pull trong Ollama
 
@@ -45,39 +57,159 @@ TRANSCRIBE_ENGINE_LABELS = {
     "gemma": "Gemma 4 E2B",
     "nghiasr": "NghiASR",
 }
+DIARIZATION_ENGINES = {"whisper", "nghiasr"}
 
-for folder in (UPLOAD_FOLDER, TEMP_FOLDER, RESULTS_FOLDER):
+for folder in (UPLOAD_FOLDER, TEMP_FOLDER):
     os.makedirs(folder, exist_ok=True)
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["USE_GEMINI_API"] = False
+app.config["USE_DATABASE"] = True
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # tổng request tối đa 2 GB
 
-# Lưu trạng thái các job trong bộ nhớ. Với nhu cầu production nhiều người dùng
-# đồng thời, nên thay bằng Redis/SQLite thay vì dict trong RAM.
+# Trạng thái polling luôn nằm trong RAM. Khi --no-database được bật, cùng dict
+# này cũng là kho lưu tạm cho sidebar, Markdown editor và Word export.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
-results_lock = threading.Lock()
 
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def database_enabled() -> bool:
+    return bool(app.config.get("USE_DATABASE", True))
+
+
 def update_job(job_id: str, **kwargs) -> None:
     with jobs_lock:
         jobs[job_id].update(kwargs)
+        jobs[job_id]["updated_at"] = utc_now()
+
+
+def update_job_status(job_id: str, status: str, message: str) -> None:
+    update_job(job_id, status=status, message=message)
+    if database_enabled():
+        update_meeting_status(job_id, status, message)
+
+
+def _job_to_meeting(job_id: str, job: dict) -> dict:
+    """Return the same public shape as database.get_meeting()."""
+    return {
+        "id": job_id,
+        "title": job.get("title", ""),
+        "filename": job.get("filename", ""),
+        "engine": job.get("engine", ""),
+        "transcript": job.get("transcript", ""),
+        "summary": job.get("minutes", ""),
+        "status": job.get("status", "queued"),
+        "status_message": job.get("message", ""),
+        "file_count": job.get("file_count", 1),
+        "total_audio_bytes": job.get("total_audio_bytes", 0),
+        "created_at": job.get("created_at"),
+        "completed_at": job.get("completed_at"),
+        "last_edited_at": job.get("last_edited_at"),
+        "updated_at": job.get("updated_at"),
+    }
+
+
+def get_stored_meeting(job_id: str):
+    if database_enabled():
+        return get_meeting(job_id)
+    with jobs_lock:
+        job = jobs.get(job_id)
+        return _job_to_meeting(job_id, job) if job else None
+
+
+def get_stored_meetings() -> list[dict]:
+    if database_enabled():
+        return get_meetings()
+    with jobs_lock:
+        meetings = [
+            _job_to_meeting(job_id, job)
+            for job_id, job in jobs.items()
+            if job.get("status") == "completed"
+        ]
+    meetings.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return [
+        {
+            key: meeting.get(key)
+            for key in ("id", "title", "created_at", "last_edited_at", "updated_at")
+        }
+        for meeting in meetings
+    ]
+
+
+def save_stored_meeting(job_id: str, transcript: str, minutes: str):
+    if database_enabled():
+        return save_meeting(job_id, transcript, minutes)
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job or job.get("status") != "completed":
+            return None
+        edited_at = utc_now()
+        job.update(
+            transcript=transcript,
+            minutes=minutes,
+            last_edited_at=edited_at,
+            updated_at=edited_at,
+        )
+        return _job_to_meeting(job_id, job)
 
 
 def strip_transcript_timestamps(transcript: str) -> str:
     """Remove display-only timeline labels before meeting summarization."""
     return re.sub(
-        r"^\[\d{2,}:\d{2}:\d{2}\]\s*",
+        (
+            r"^\[\d{2,}:\d{2}:\d{2}(?:\.\d{3})?"
+            r"(?:\s*-\s*\d{2,}:\d{2}:\d{2}(?:\.\d{3})?)?\]\s*"
+        ),
         "",
         transcript,
         flags=re.MULTILINE,
     )
+
+
+def parse_diarization_options(form, transcribe_engine: str):
+    """Validate optional diarization fields from an upload request."""
+    enabled = str(form.get("diarization", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not enabled:
+        return False, None, DEFAULT_MIN_SPEAKER_TURN_SECONDS
+    if transcribe_engine not in DIARIZATION_ENGINES:
+        raise ValueError("Tách người nói chỉ hỗ trợ Whisper và NghiASR.")
+
+    speaker_count_text = str(form.get("speaker_count", "")).strip()
+    speaker_count = None
+    if speaker_count_text:
+        try:
+            speaker_count = int(speaker_count_text)
+        except ValueError as error:
+            raise ValueError("Số người nói phải là số nguyên từ 1 đến 20.") from error
+        if not 1 <= speaker_count <= 20:
+            raise ValueError("Số người nói phải nằm trong khoảng 1 đến 20.")
+
+    min_turn_text = str(form.get("min_speaker_turn", "")).strip()
+    try:
+        min_turn_seconds = (
+            float(min_turn_text)
+            if min_turn_text
+            else DEFAULT_MIN_SPEAKER_TURN_SECONDS
+        )
+    except ValueError as error:
+        raise ValueError("Độ dài lượt nói tối thiểu phải là một số.") from error
+    if not 0 <= min_turn_seconds <= 10:
+        raise ValueError("Độ dài lượt nói tối thiểu phải từ 0 đến 10 giây.")
+    return True, speaker_count, min_turn_seconds
 
 
 def process_audio_files(
@@ -85,34 +217,64 @@ def process_audio_files(
     job_id: str,
     transcribe_engine: str = "whisper",
     meeting_title: str = "Kết luận cuộc họp",
-    original_filename: str = "",
+    diarization_enabled: bool = False,
+    speaker_count: int | None = None,
+    min_speaker_turn_seconds: float = DEFAULT_MIN_SPEAKER_TURN_SECONDS,
 ) -> None:
-    """Pipeline: ghép audio theo thứ tự -> chia đoạn -> transcribe -> tóm tắt."""
+    """Run either continuous chunking or full-meeting speaker diarization."""
     segment_dir = os.path.join(TEMP_FOLDER, job_id)
     segment_paths = []
 
     try:
-        splitting_message = (
-            f"Đang ghép {len(file_paths)} file và chia nhỏ audio..."
-            if len(file_paths) > 1
-            else "Đang chia nhỏ file audio..."
-        )
-        update_job(job_id, status="splitting", message=splitting_message)
-        segment_minutes = (
-            NGHIASR_SEGMENT_MINUTES
-            if transcribe_engine == "nghiasr"
-            else SEGMENT_MINUTES
-        )
-        segment_paths = split_audio_files(
-            file_paths,
-            segment_dir,
-            segment_minutes=segment_minutes,
-        )
+        diarization_result = None
+        if diarization_enabled:
+            update_job_status(
+                job_id,
+                "diarizing",
+                "Đang ghép toàn bộ audio và nhận diện người nói...",
+            )
+            # Import lazily so the ordinary pipeline does not require pyannote.
+            from speaker_diarization import diarize_audio_files
 
-        total = len(segment_paths)
+            diarization_result = diarize_audio_files(
+                file_paths,
+                segment_dir,
+                min_turn_seconds=min_speaker_turn_seconds,
+                num_speakers=speaker_count,
+            )
+            segment_paths = [turn.path for turn in diarization_result.turns]
+            total = len(diarization_result.turns)
+        else:
+            splitting_message = (
+                f"Đang ghép {len(file_paths)} file và chia nhỏ audio..."
+                if len(file_paths) > 1
+                else "Đang chia nhỏ file audio..."
+            )
+            update_job_status(job_id, "splitting", splitting_message)
+            segment_minutes = (
+                NGHIASR_SEGMENT_MINUTES
+                if transcribe_engine == "nghiasr"
+                else SEGMENT_MINUTES
+            )
+            segment_paths = split_audio_files(
+                file_paths,
+                segment_dir,
+                segment_minutes=segment_minutes,
+            )
+            total = len(segment_paths)
+
         engine_label = TRANSCRIBE_ENGINE_LABELS[transcribe_engine]
-        update_job(job_id, status="transcribing",
-                   message=f"Đang chuyển giọng nói thành văn bản bằng {engine_label} (0/{total})...")
+        speaker_message = (
+            f", {diarization_result.speaker_count} người nói"
+            if diarization_result
+            else ""
+        )
+        update_job_status(
+            job_id,
+            "transcribing",
+            f"Đang chuyển giọng nói thành văn bản bằng {engine_label} "
+            f"(0/{total}{speaker_message})...",
+        )
 
         def on_progress(current, total_segments):
             update_job(
@@ -126,21 +288,47 @@ def process_audio_files(
             )
         elif transcribe_engine == "nghiasr":
             # Import lazily so other engines do not load/download the NghiASR model.
-            from transcribe_nghiasr import transcribe_segments as transcribe_nghiasr
+            if diarization_result:
+                from transcribe_nghiasr import (
+                    transcribe_diarized_segments as transcribe_nghiasr_diarized,
+                )
 
-            transcript = transcribe_nghiasr(
-                segment_paths, language=WHISPER_LANGUAGE, progress_callback=on_progress
-            )
+                transcript = transcribe_nghiasr_diarized(
+                    diarization_result.turns,
+                    language=WHISPER_LANGUAGE,
+                    progress_callback=on_progress,
+                )
+            else:
+                from transcribe_nghiasr import transcribe_segments as transcribe_nghiasr
+
+                transcript = transcribe_nghiasr(
+                    segment_paths,
+                    language=WHISPER_LANGUAGE,
+                    progress_callback=on_progress,
+                )
         else:
-            transcript = transcribe_whisper(
-                segment_paths, language=WHISPER_LANGUAGE, progress_callback=on_progress
-            )
+            if diarization_result:
+                transcript = transcribe_whisper_diarized(
+                    diarization_result.turns,
+                    language=WHISPER_LANGUAGE,
+                    progress_callback=on_progress,
+                )
+            else:
+                transcript = transcribe_whisper(
+                    segment_paths,
+                    language=WHISPER_LANGUAGE,
+                    progress_callback=on_progress,
+                )
 
         # Một số engine (đặc biệt NghiASR) có thể trả về toàn bộ chữ in hoa.
         # Chuẩn hóa một lần tại đây để transcript hiển thị và lưu dưới dạng chữ thường.
         transcript = transcript.lower()
 
-        update_job(job_id, status="summarizing", message="Đang tóm tắt thành biên bản họp...")
+        update_job_status(
+            job_id,
+            "summarizing",
+            "Đang tóm tắt thành biên bản họp...",
+        )
         minutes = summarize_transcript(
             strip_transcript_timestamps(transcript),
             model=OLLAMA_MODEL,
@@ -148,26 +336,27 @@ def process_audio_files(
             meeting_title=meeting_title,
         )
 
-        # Lưu kết quả ra file để tiện tải về / xem lại sau
-        with results_lock:
-            _write_result(job_id, minutes, transcript)
-            _write_result_metadata(
-                job_id,
-                title=meeting_title,
-                filename=original_filename,
-                engine=transcribe_engine,
-            )
+        if database_enabled() and not complete_meeting(job_id, transcript, minutes):
+            raise DatabaseError("Không tìm thấy cuộc họp để lưu kết quả.")
 
+        completed_at = utc_now()
         update_job(
             job_id,
             status="completed",
             message="Hoàn tất!",
             transcript=transcript,
             minutes=minutes,
+            completed_at=completed_at,
         )
 
     except Exception as e:
-        update_job(job_id, status="error", message=f"Lỗi: {e}")
+        error_message = f"Lỗi: {e}"
+        update_job(job_id, status="error", message=error_message)
+        if database_enabled():
+            try:
+                update_meeting_status(job_id, "error", error_message)
+            except DatabaseError:
+                app.logger.exception("Không thể lưu trạng thái lỗi vào SQL Server")
 
     finally:
         # Dọn dẹp file tạm dù thành công hay lỗi
@@ -179,6 +368,12 @@ def process_audio_files(
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.errorhandler(DatabaseError)
+def handle_database_error(error):
+    app.logger.error("SQL Server error: %s", error)
+    return jsonify({"error": str(error)}), 503
 
 
 @app.route("/upload", methods=["POST"])
@@ -208,11 +403,21 @@ def upload_file():
     if len(meeting_title) > 180:
         return jsonify({"error": "Tên báo cáo không được vượt quá 180 ký tự"}), 400
 
+    transcribe_engine = request.form.get("engine", "whisper")
+    if transcribe_engine not in TRANSCRIBE_ENGINE_LABELS:
+        transcribe_engine = "whisper"
+    try:
+        diarization_enabled, speaker_count, min_speaker_turn_seconds = (
+            parse_diarization_options(request.form, transcribe_engine)
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
     job_id = str(uuid.uuid4())
     original_filenames = [file.filename for file in files]
     original_filename = " → ".join(original_filenames)
     file_paths = []
-    stored_filenames = []
+    total_audio_bytes = 0
     try:
         for index, file in enumerate(files, start=1):
             extension = file.filename.rsplit(".", 1)[1].lower()
@@ -221,23 +426,47 @@ def upload_file():
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], stored_name)
             file.save(file_path)
             file_paths.append(file_path)
-            stored_filenames.append(filename)
+            total_audio_bytes += os.path.getsize(file_path)
     except OSError as error:
         cleanup_files(file_paths)
         return jsonify({"error": f"Không thể lưu file tải lên: {error}"}), 500
 
-    # Lấy engine transcribe từ form data (mặc định whisper)
-    transcribe_engine = request.form.get("engine", "whisper")
-    if transcribe_engine not in TRANSCRIBE_ENGINE_LABELS:
-        transcribe_engine = "whisper"
+    stored_engine = (
+        f"{transcribe_engine}+diarization"
+        if diarization_enabled
+        else transcribe_engine
+    )
+    if database_enabled():
+        try:
+            insert_meeting(
+                job_id,
+                title=meeting_title,
+                filename=original_filename,
+                engine=stored_engine,
+                file_count=len(file_paths),
+                total_audio_bytes=total_audio_bytes,
+            )
+        except DatabaseError:
+            cleanup_files(file_paths)
+            raise
 
+    created_at = utc_now()
     with jobs_lock:
         jobs[job_id] = {
             "status": "queued",
             "message": "Đang chờ xử lý...",
-            "filename": " → ".join(stored_filenames),
+            "filename": original_filename,
             "file_count": len(file_paths),
+            "total_audio_bytes": total_audio_bytes,
             "title": meeting_title,
+            "engine": stored_engine,
+            "diarization": diarization_enabled,
+            "transcript": "",
+            "minutes": "",
+            "created_at": created_at,
+            "completed_at": None,
+            "last_edited_at": None,
+            "updated_at": created_at,
         }
 
     thread = threading.Thread(
@@ -247,7 +476,9 @@ def upload_file():
             job_id,
             transcribe_engine,
             meeting_title,
-            original_filename,
+            diarization_enabled,
+            speaker_count,
+            min_speaker_turn_seconds,
         ),
     )
     thread.daemon = True
@@ -273,131 +504,14 @@ def job_status(job_id):
     return jsonify(response)
 
 
-# Các helper/API nhỏ dưới đây chỉ phục vụ sidebar lịch sử và Markdown editor.
-def _result_path(result_id: str) -> str | None:
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", result_id):
-        return None
-    return os.path.join(RESULTS_FOLDER, f"{result_id}.txt")
-
-
-def _metadata_path(result_id: str) -> str | None:
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", result_id):
-        return None
-    return os.path.join(RESULTS_FOLDER, f"{result_id}.json")
-
-
-def _read_result_metadata(result_id: str) -> dict:
-    path = _metadata_path(result_id)
-    if not path or not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as source:
-            metadata = json.load(source)
-        return metadata if isinstance(metadata, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _write_result_metadata(
-    result_id: str,
-    *,
-    title: str,
-    filename: str,
-    engine: str,
-) -> None:
-    path = _metadata_path(result_id)
-    if not path:
-        raise ValueError("Meeting ID không hợp lệ")
-    temporary_path = f"{path}.tmp"
-    metadata = {
-        "title": title,
-        "filename": filename,
-        "engine": engine,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    with open(temporary_path, "w", encoding="utf-8", newline="\n") as output:
-        json.dump(metadata, output, ensure_ascii=False, indent=2)
-        output.write("\n")
-    os.replace(temporary_path, path)
-
-
-def _read_result(result_id: str) -> dict | None:
-    path = _result_path(result_id)
-    if not path or not os.path.isfile(path):
-        return None
-
-    with open(path, "r", encoding="utf-8") as source:
-        content = source.read()
-    marker = "=== TRANSCRIPT ĐẦY ĐỦ ==="
-    summary_part, transcript = (
-        content.split(marker, 1) if marker in content else (content, "")
-    )
-    summary = summary_part.replace("=== BIÊN BẢN HỌP ===", "", 1).strip()
-
-    metadata = _read_result_metadata(result_id)
-    title = str(metadata.get("title") or "").strip()
-    if not title:
-        title = f"Cuộc họp {datetime.fromtimestamp(os.path.getmtime(path)):%d/%m/%Y}"
-        for line in summary.splitlines():
-            candidate = line.strip().lstrip("#>").replace("**", "").strip(" *_`")
-            if (
-                candidate
-                and candidate != "---"
-                and candidate.upper() != "THÔNG BÁO"
-            ):
-                title = candidate[:180]
-                break
-
-    timestamp = datetime.fromtimestamp(
-        os.path.getmtime(path), tz=timezone.utc
-    ).isoformat()
-    return {
-        "id": result_id,
-        "title": title,
-        "filename": str(metadata.get("filename") or ""),
-        "engine": str(metadata.get("engine") or ""),
-        "created_at": str(metadata.get("created_at") or timestamp),
-        "updated_at": timestamp,
-        "summary": summary,
-        "transcript": transcript.strip(),
-    }
-
-
-def _write_result(result_id: str, summary: str, transcript: str) -> None:
-    path = _result_path(result_id)
-    if not path:
-        raise ValueError("Meeting ID không hợp lệ")
-    temporary_path = f"{path}.tmp"
-    with open(temporary_path, "w", encoding="utf-8", newline="\n") as output:
-        output.write(
-            "=== BIÊN BẢN HỌP ===\n\n"
-            f"{summary}\n\n"
-            "=== TRANSCRIPT ĐẦY ĐỦ ===\n\n"
-            f"{transcript}"
-        )
-    os.replace(temporary_path, path)
-
-
 @app.route("/api/meetings")
 def meetings_index():
-    meetings = []
-    with results_lock:
-        for filename in os.listdir(RESULTS_FOLDER):
-            if filename.endswith(".txt"):
-                meeting = _read_result(filename[:-4])
-                if meeting:
-                    meetings.append({
-                        key: meeting[key]
-                        for key in ("id", "title", "created_at", "updated_at")
-                    })
-    meetings.sort(key=lambda item: item["updated_at"], reverse=True)
-    return jsonify({"meetings": meetings})
+    return jsonify({"meetings": get_stored_meetings()})
 
 
 @app.route("/api/meetings/<result_id>")
 def meeting_detail(result_id):
-    with results_lock:
-        meeting = _read_result(result_id)
+    meeting = get_stored_meeting(result_id)
     if not meeting:
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
     return jsonify(meeting)
@@ -413,11 +527,9 @@ def update_meeting(result_id):
     if len(summary) > 20_000_000 or len(transcript) > 20_000_000:
         return jsonify({"error": "Nội dung quá lớn"}), 413
 
-    with results_lock:
-        if not _read_result(result_id):
-            return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
-        _write_result(result_id, summary, transcript)
-        meeting = _read_result(result_id)
+    meeting = save_stored_meeting(result_id, transcript, summary)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
     return jsonify(meeting)
 
 
@@ -427,8 +539,7 @@ def export_meeting_word(result_id):
     if document_type not in {"summary", "transcript"}:
         return jsonify({"error": "Loại tài liệu không hợp lệ"}), 400
 
-    with results_lock:
-        meeting = _read_result(result_id)
+    meeting = get_stored_meeting(result_id)
     if not meeting:
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
 
@@ -466,19 +577,40 @@ def export_meeting_word(result_id):
     )
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run the AI Meeting Note Taker.")
     parser.add_argument(
         "--api",
         action="store_true",
         help=f"Use the Gemini API ({GEMINI_MODEL}) for meeting summaries.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--no-database",
+        action="store_true",
+        help=(
+            "Run without SQL Server. Meeting history and edits are kept only "
+            "in memory until the Flask process stops."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = parse_args()
     app.config["USE_GEMINI_API"] = args.api
+    app.config["USE_DATABASE"] = not args.no_database
+    if database_enabled():
+        try:
+            check_database()
+        except DatabaseError as error:
+            print(f"[SQL Server] {error}")
+            print("[SQL Server] Hãy chạy database.sql trong SSMS trước khi mở app.")
+            raise SystemExit(1) from error
+    else:
+        print(
+            "[Database] Disabled: history and edits are temporary and will be "
+            "lost when this process stops."
+        )
     if args.api:
         print(f"[API] Gemini enabled for summaries: {GEMINI_MODEL}")
     print("Meeting Note Taker đang chạy tại http://localhost:5001")

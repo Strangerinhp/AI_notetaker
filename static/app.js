@@ -35,6 +35,11 @@
     fileName: $("file-name"),
     fileDetail: $("file-detail"),
     engine: $("engine-select"),
+    diarization: $("diarization-enabled"),
+    diarizationNote: $("diarization-note"),
+    diarizationOptions: $("diarization-options"),
+    speakerCount: $("speaker-count"),
+    minSpeakerTurn: $("min-speaker-turn"),
     uploadButton: $("upload-button"),
     processTitle: $("process-title"),
     processMessage: $("process-message"),
@@ -331,12 +336,26 @@
     ui.uploadButton.disabled = !state.files.length || !ui.meetingTitleInput.value.trim();
   }
 
+  function updateDiarizationControls() {
+    const supported = ui.engine.value === "whisper" || ui.engine.value === "nghiasr";
+    if (!supported) ui.diarization.checked = false;
+    ui.diarization.disabled = !supported;
+    const enabled = supported && ui.diarization.checked;
+    ui.diarizationOptions.classList.toggle("hidden", !enabled);
+    ui.speakerCount.disabled = !enabled;
+    ui.minSpeakerTurn.disabled = !enabled;
+    ui.diarizationNote.textContent = supported
+      ? "Dùng pyannote trước khi chạy Whisper hoặc NghiASR."
+      : "Gemma chưa hỗ trợ tách người nói.";
+  }
+
   function setProgress(status, message) {
     const stages = {
       uploading: ["Đang tải file lên...", 8],
       queued: ["Đang chờ xử lý...", 14],
       splitting: ["Đang chuẩn bị audio...", 28],
-      transcribing: ["Đang tạo transcript...", 62],
+      diarizing: ["Đang tách người nói...", 46],
+      transcribing: ["Đang tạo transcript...", 70],
       summarizing: ["Đang tạo bản tóm tắt...", 88],
       completed: ["Hoàn tất", 100],
     };
@@ -359,6 +378,11 @@
     state.files.forEach((file) => form.append("files", file));
     form.append("engine", ui.engine.value);
     form.append("title", meetingTitle);
+    form.append("diarization", String(ui.diarization.checked));
+    if (ui.diarization.checked) {
+      form.append("speaker_count", ui.speakerCount.value.trim());
+      form.append("min_speaker_turn", ui.minSpeakerTurn.value.trim());
+    }
 
     try {
       const payload = await api("/upload", { method: "POST", body: form });
@@ -406,6 +430,10 @@
       '<svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>';
     ui.fileName.textContent = "Thả các file vào đây hoặc bấm để chọn";
     ui.fileDetail.textContent = "MP3, WAV, M4A, MP4, OGG, FLAC hoặc WEBM";
+    ui.diarization.checked = false;
+    ui.speakerCount.value = "";
+    ui.minSpeakerTurn.value = "2.0";
+    updateDiarizationControls();
     ui.uploadButton.disabled = true;
     ui.uploadCard.classList.remove("hidden");
     ui.processingCard.classList.add("hidden");
@@ -532,6 +560,8 @@
     ui.dropZone.addEventListener("click", () => ui.fileInput.click());
     ui.fileInput.addEventListener("change", () => selectFiles(ui.fileInput.files));
     ui.meetingTitleInput.addEventListener("input", updateUploadButtonState);
+    ui.engine.addEventListener("change", updateDiarizationControls);
+    ui.diarization.addEventListener("change", updateDiarizationControls);
     ui.dropZone.addEventListener("dragover", (event) => {
       event.preventDefault();
       ui.dropZone.classList.add("drag");
@@ -576,6 +606,7 @@
 
   async function init() {
     bindEvents();
+    updateDiarizationControls();
     await loadHistory();
     const match = location.hash.match(/^#meeting=([^&]+)$/);
     if (match) {

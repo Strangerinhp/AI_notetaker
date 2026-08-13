@@ -9,6 +9,8 @@ import soundfile as sf
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
+from speaker_diarization import SpeakerTurn, format_speaker_turn
+
 REPO_ID = "NghiMe/NghiASR"
 SAMPLE_RATE = 16000
 FEATURE_DIM = 80
@@ -189,4 +191,21 @@ def transcribe_segments(
         text = _clean_token_text(timeline_buckets[bucket])
         if text:
             lines.append(f"[{_format_timestamp(bucket)}] {text}")
+    return "\n".join(lines)
+
+
+def transcribe_diarized_segments(
+    turns: list[SpeakerTurn],
+    language: str | None = None,
+    progress_callback=None,
+) -> str:
+    """Transcribe pyannote turns and retain speaker/time attribution."""
+    lines = []
+    total = len(turns)
+    for index, turn in enumerate(turns, start=1):
+        text = transcribe_segment(turn.path, language=language)
+        if text:
+            lines.append(format_speaker_turn(turn, text))
+        if progress_callback:
+            progress_callback(index, total)
     return "\n".join(lines)

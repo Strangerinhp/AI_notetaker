@@ -15,7 +15,7 @@ from pathlib import Path
 TARGET_SAMPLE_RATE = 16_000
 
 
-def _find_ffmpeg():
+def find_ffmpeg():
     """Return an FFmpeg executable path."""
     configured = os.environ.get("FFMPEG_BINARY")
     if configured:
@@ -49,6 +49,10 @@ def _find_ffmpeg():
     )
 
 
+# Backward-compatible alias for code that imported the previous private name.
+_find_ffmpeg = find_ffmpeg
+
+
 def _chunk_sort_key(path):
     match = re.search(r"_part(\d+)\.wav$", os.path.basename(path))
     return int(match.group(1)) if match else 0
@@ -77,7 +81,7 @@ def split_audio(audio_path, temp_dir, segment_minutes=10):
     segment_time = f"{segment_seconds:.6f}".rstrip("0").rstrip(".")
 
     command = [
-        _find_ffmpeg(),
+        find_ffmpeg(),
         "-hide_banner",
         "-loglevel",
         "error",
@@ -166,7 +170,7 @@ def split_audio_files(audio_paths, temp_dir, segment_minutes=10):
     segment_time = f"{segment_seconds:.6f}".rstrip("0").rstrip(".")
 
     command = [
-        _find_ffmpeg(),
+        find_ffmpeg(),
         "-hide_banner",
         "-loglevel",
         "error",

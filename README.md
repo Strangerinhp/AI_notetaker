@@ -26,6 +26,18 @@ Chọn `Runtime → Change runtime type → T4 GPU`, sau đó chạy lần lư�
 Không cần cài SQL Server, SSMS hay Microsoft ODBC Driver khi dùng
 `--no-database`.
 
+Không sửa `app.py` trong Colab. Trong toàn bộ hướng dẫn, chỉ cần thay URL GitHub
+ở bước 1. Cờ `--no-database` quyết định app bỏ qua SQL Server; việc có dùng
+Gemini hay không được quyết định bằng cờ `--api`.
+
+Thứ tự bắt buộc là:
+
+1. Clone repo và cài dependency.
+2. Khởi động Ollama và tải model.
+3. **Chạy `app.py` bằng cell khởi động Flask.**
+4. Xác nhận Flask trả HTTP 200.
+5. Khởi động Cloudflare Tunnel và mở URL được cấp.
+
 ### 1. Clone và cài dependency
 
 ```python
@@ -75,9 +87,14 @@ time.sleep(3)
 diện, model này cũng xử lý transcript audio. Không thêm `--api` nếu muốn dùng
 Gemma để tóm tắt.
 
-### 3. Khởi động Flask không có database
+### 3. Chạy `app.py` để khởi động Flask
+
+Đây chính là bước chạy `app.py`. Chạy cell này **một lần**, sau khi
+`ollama pull gemma4:e2b` hoàn tất và trước khi chạy Cloudflare Tunnel:
 
 ```python
+import requests
+
 flask_log = open("/content/meetnote.log", "w")
 flask_process = subprocess.Popen(
     ["python", "app.py", "--no-database"],
@@ -86,7 +103,30 @@ flask_process = subprocess.Popen(
 )
 time.sleep(5)
 !tail -n 30 /content/meetnote.log
+
+if flask_process.poll() is not None:
+    raise RuntimeError("app.py đã dừng. Xem lỗi trong /content/meetnote.log")
+
+response = requests.get("http://127.0.0.1:5001", timeout=10)
+print("Flask HTTP status:", response.status_code)
 ```
+
+Kết quả phải là `Flask HTTP status: 200`. Lệnh trên dùng Ollama/Gemma để tóm
+tắt và không đụng đến SQL Server. Nó tương đương với lệnh terminal:
+
+```bash
+python app.py --no-database
+```
+
+Nếu muốn Gemini tóm tắt thay cho Ollama, chỉ đổi danh sách lệnh trong cell thành:
+
+```python
+["python", "app.py", "--no-database", "--api"]
+```
+
+Đây là thay đổi cờ chạy, không phải sửa `app.py`. Khi dùng `--api`, cần đặt
+`GEMINI_API_KEY` trong Colab Secrets. Ollama vẫn cần chạy nếu chọn **Gemma 4
+E2B** làm engine transcript trên giao diện.
 
 ### 4. Tạo URL demo tạm thời
 
@@ -96,21 +136,28 @@ time.sleep(5)
 ```
 
 ```python
-tunnel_process = subprocess.Popen(
-    ["cloudflared", "tunnel", "--url", "http://127.0.0.1:5001"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-)
-for line in tunnel_process.stdout:
-    print(line, end="")
-    if "trycloudflare.com" in line:
-        break
+!pkill -f cloudflared || true
 ```
 
-Mở URL `https://...trycloudflare.com` được in ra. Không chia sẻ rộng URL vì app
-chưa có đăng nhập. Giữ runtime Colab, `flask_process`, `ollama_process` và
-`tunnel_process` chạy suốt buổi demo.
+Cell cuối cùng dùng HTTP/2 để tránh trường hợp kết nối QUIC từ Colab bị treo:
+
+```python
+!cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:5001
+```
+
+Không dừng cell cuối. Sau vài giây, output sẽ có khung chứa dòng dạng:
+
+```text
+https://random-words.trycloudflare.com
+```
+
+Đó là link giao diện. Cell này phải tiếp tục hiện trạng thái đang chạy để giữ
+tunnel hoạt động. Không chia sẻ rộng URL vì app chưa có đăng nhập. Giữ runtime
+Colab, `flask_process`, `ollama_process` và cell Tunnel chạy suốt buổi demo.
+
+Mỗi khi Colab bị `Disconnect and delete runtime`, phải chạy lại các cell theo
+đúng thứ tự trên vì máy ảo và dữ liệu RAM đã bị xóa. Bạn vẫn không cần sửa bất
+kỳ dòng nào trong `app.py`.
 
 Trên T4, cấu hình dễ ổn định nhất là chọn **Gemma 4 E2B** và tắt diarization.
 Whisper `large-v3`, pyannote và Ollama cùng giữ model trên GPU có thể vượt VRAM.

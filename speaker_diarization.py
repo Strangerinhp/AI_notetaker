@@ -6,7 +6,7 @@ The pipeline follows the reference notebook's order:
 2. convert the whole meeting to mono 16 kHz PCM WAV with FFmpeg;
 3. run pyannote Community-1 on the complete meeting;
 4. discard diarization turns shorter than the configured threshold;
-5. write the retained turns as small WAV files for an ASR engine.
+5. expose the normalized meeting audio and retained timeline to the ASR engine.
 
 Heavy diarization dependencies are imported lazily so ordinary transcription
 continues to work when diarization is disabled.
@@ -45,7 +45,7 @@ class DiarizationError(RuntimeError):
 
 @dataclass(frozen=True)
 class SpeakerTurn:
-    """One retained speaker turn and the WAV slice sent to ASR."""
+    """One retained speaker turn; ``path`` is only used by the legacy flow."""
 
     path: str
     start: float
@@ -66,6 +66,8 @@ class DiarizationResult:
     raw_turn_count: int
     removed_turn_count: int
     speaker_count: int
+    meeting_audio_path: str = ""
+    audio_duration: float = 0.0
 
 
 def _hugging_face_token() -> str | None:
@@ -317,8 +319,9 @@ def diarize_audio_files(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     asr_padding_seconds: float = DEFAULT_ASR_PADDING_SECONDS,
+    write_turn_audio: bool = True,
 ) -> DiarizationResult:
-    """Diarize the complete meeting and write retained speaker-turn WAVs."""
+    """Diarize the meeting and optionally write legacy per-turn ASR WAV files."""
     if not 0 <= min_turn_seconds <= 30:
         raise ValueError("min_turn_seconds must be between 0 and 30 seconds.")
     if not 0 <= asr_padding_seconds <= 2:
@@ -387,26 +390,29 @@ def diarize_audio_files(
     speaker_names = _friendly_speaker_names(retained)
     audio_duration = audio.size / sample_rate
     turn_dir = work_path / "speaker_turns"
-    turn_dir.mkdir(parents=True, exist_ok=True)
+    if write_turn_audio:
+        turn_dir.mkdir(parents=True, exist_ok=True)
     speaker_turns = []
     for index, (start, end, source_speaker) in enumerate(retained, start=1):
-        padded_start = max(0.0, start - asr_padding_seconds)
-        padded_end = min(audio_duration, end + asr_padding_seconds)
-        first_sample = int(round(padded_start * sample_rate))
-        final_sample = int(round(padded_end * sample_rate))
-        segment_audio = audio[first_sample:final_sample]
-        if segment_audio.size == 0:
-            continue
-        turn_path = turn_dir / f"turn_{index:05d}.wav"
-        sf.write(
-            turn_path,
-            segment_audio,
-            sample_rate,
-            subtype="PCM_16",
-        )
+        turn_path = ""
+        if write_turn_audio:
+            padded_start = max(0.0, start - asr_padding_seconds)
+            padded_end = min(audio_duration, end + asr_padding_seconds)
+            first_sample = int(round(padded_start * sample_rate))
+            final_sample = int(round(padded_end * sample_rate))
+            segment_audio = audio[first_sample:final_sample]
+            if segment_audio.size == 0:
+                continue
+            turn_path = str(turn_dir / f"turn_{index:05d}.wav")
+            sf.write(
+                turn_path,
+                segment_audio,
+                sample_rate,
+                subtype="PCM_16",
+            )
         speaker_turns.append(
             SpeakerTurn(
-                path=str(turn_path),
+                path=turn_path,
                 start=start,
                 end=end,
                 speaker=speaker_names[source_speaker],
@@ -422,6 +428,8 @@ def diarize_audio_files(
         raw_turn_count=len(raw_turns),
         removed_turn_count=len(raw_turns) - len(retained),
         speaker_count=len(speaker_names),
+        meeting_audio_path=str(meeting_wav),
+        audio_duration=audio_duration,
     )
     print(
         "[diarization] Complete: "

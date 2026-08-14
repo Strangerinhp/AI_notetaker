@@ -37,8 +37,9 @@ from database import (
     update_meeting_status,
 )
 from summarize import GEMINI_MODEL, summarize_transcript
+from sliding_window_asr import build_sliding_windows
 from transcribe_whisper import (
-    transcribe_diarized_segments as transcribe_whisper_diarized,
+    transcribe_diarized_audio as transcribe_whisper_diarized,
     transcribe_segments as transcribe_whisper,
 )
 from transcribe_gemma import transcribe_segments as transcribe_gemma
@@ -301,9 +302,12 @@ def process_audio_files(
                 segment_dir,
                 min_turn_seconds=min_speaker_turn_seconds,
                 num_speakers=speaker_count,
+                write_turn_audio=False,
             )
-            segment_paths = [turn.path for turn in diarization_result.turns]
-            total = len(diarization_result.turns)
+            segment_paths = [
+                turn.path for turn in diarization_result.turns if turn.path
+            ]
+            total = len(build_sliding_windows(diarization_result.audio_duration))
         else:
             splitting_message = (
                 f"Đang ghép {len(file_paths)} file và chia nhỏ audio..."
@@ -350,10 +354,11 @@ def process_audio_files(
             # Import lazily so other engines do not load/download the NghiASR model.
             if diarization_result:
                 from transcribe_nghiasr import (
-                    transcribe_diarized_segments as transcribe_nghiasr_diarized,
+                    transcribe_diarized_audio as transcribe_nghiasr_diarized,
                 )
 
                 transcript = transcribe_nghiasr_diarized(
+                    diarization_result.meeting_audio_path,
                     diarization_result.turns,
                     language=WHISPER_LANGUAGE,
                     progress_callback=on_progress,
@@ -369,6 +374,7 @@ def process_audio_files(
         else:
             if diarization_result:
                 transcript = transcribe_whisper_diarized(
+                    diarization_result.meeting_audio_path,
                     diarization_result.turns,
                     language=WHISPER_LANGUAGE,
                     progress_callback=on_progress,

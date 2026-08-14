@@ -184,9 +184,23 @@ thực hiện pipeline sau:
    mono 16 kHz bằng FFmpeg.
 2. Chạy `pyannote/speaker-diarization-community-1` trên toàn bộ cuộc họp để
    phân cụm người nói.
-3. Bỏ các lượt nói ngắn hơn ngưỡng trên giao diện (mặc định `2.0` giây).
-4. Gửi từng lượt còn lại sang Whisper hoặc NghiASR và tạo transcript dạng
-   `[00:00:05 - 00:00:12] người nói 1: ...`.
+3. Bỏ các lượt speaker ngắn hơn ngưỡng trên giao diện (mặc định `2.0` giây)
+   khỏi bước căn speaker; audio gốc không bị cắt bỏ.
+4. Chạy Whisper hoặc NghiASR trên audio liên tục bằng sliding window 30 giây,
+   overlap 5 giây. Mỗi cửa sổ chỉ giữ hypothesis thuộc vùng trung tâm của nó để
+   không lặp chữ trong phần overlap.
+5. Dùng word/token timestamps để gán kết quả ASR về lượt nói của pyannote và tạo
+   transcript dạng `[00:00:05 - 00:00:12] người nói 1: ...`.
+
+Có thể chỉnh hai tham số sliding window mà không sửa code:
+
+```powershell
+$env:DIARIZATION_ASR_WINDOW_SECONDS="30"
+$env:DIARIZATION_ASR_OVERLAP_SECONDS="5"
+python app.py
+```
+
+Overlap lớn hơn cung cấp thêm ngữ cảnh tại biên nhưng làm tăng thời gian xử lý.
 
 ### Thiết lập lần đầu
 

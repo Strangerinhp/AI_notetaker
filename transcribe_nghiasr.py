@@ -10,6 +10,14 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
 from speaker_diarization import SpeakerTurn, format_speaker_turn
+from sliding_window_asr import (
+    DEFAULT_OVERLAP_SECONDS,
+    DEFAULT_WINDOW_SECONDS,
+    TimedUnit,
+    assign_units_to_turns,
+    build_sliding_windows,
+    window_owns,
+)
 
 REPO_ID = "NghiMe/NghiASR"
 SAMPLE_RATE = 16000
@@ -140,12 +148,17 @@ def _transcribe_segment_result(segment_path: str, language: str | None = None):
             f"NghiASR expects {SAMPLE_RATE} Hz audio, received {sample_rate} Hz."
         )
 
+    return _recognize_samples(samples), samples.size / SAMPLE_RATE
+
+
+def _recognize_samples(samples: np.ndarray):
+    """Decode one in-memory 16 kHz mono waveform with the shared recognizer."""
     recognizer = get_recognizer()
     with _inference_lock:
         stream = recognizer.create_stream()
         stream.accept_waveform(SAMPLE_RATE, np.asarray(samples, dtype=np.float32))
         recognizer.decode_streams([stream])
-        return stream.result, samples.size / SAMPLE_RATE
+        return stream.result
 
 
 def transcribe_segment(segment_path: str, language: str | None = None) -> str:
@@ -208,4 +221,74 @@ def transcribe_diarized_segments(
             lines.append(format_speaker_turn(turn, text))
         if progress_callback:
             progress_callback(index, total)
+    return "\n".join(lines)
+
+
+def transcribe_diarized_audio(
+    audio_path: str,
+    turns: list[SpeakerTurn],
+    language: str | None = None,
+    progress_callback=None,
+    *,
+    window_seconds: float = DEFAULT_WINDOW_SECONDS,
+    overlap_seconds: float = DEFAULT_OVERLAP_SECONDS,
+) -> str:
+    """Run NghiASR on overlapping windows, then align timed tokens to speakers."""
+    del language  # NghiASR handles Vietnamese and English without a language hint.
+    samples, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
+    if samples.ndim > 1:
+        samples = samples.mean(axis=1)
+    if sample_rate != SAMPLE_RATE:
+        raise RuntimeError(
+            f"NghiASR expects {SAMPLE_RATE} Hz audio, received {sample_rate} Hz."
+        )
+
+    duration = samples.size / SAMPLE_RATE
+    windows = build_sliding_windows(
+        duration,
+        window_seconds=window_seconds,
+        overlap_seconds=overlap_seconds,
+    )
+    timed_units: list[TimedUnit] = []
+
+    for index, window in enumerate(windows, start=1):
+        first_sample = int(round(window.start * SAMPLE_RATE))
+        final_sample = int(round(window.end * SAMPLE_RATE))
+        result = _recognize_samples(samples[first_sample:final_sample])
+        tokens = list(getattr(result, "tokens", []) or [])
+        timestamps = list(getattr(result, "timestamps", []) or [])
+
+        if tokens and len(tokens) == len(timestamps):
+            for token, local_timestamp in zip(tokens, timestamps):
+                if not str(token).strip():
+                    continue
+                start = window.start + max(0.0, float(local_timestamp))
+                # Sherpa exposes token onsets, not reliable token end times.
+                # Keep these as point events so overlap ownership and speaker
+                # assignment use the timestamp emitted by the recognizer.
+                unit = TimedUnit(str(token), start, start)
+                if window_owns(unit, window):
+                    timed_units.append(unit)
+        else:
+            # Timestamp-less fallback keeps the recognized text once in the
+            # window's owned region. Current NghiASR exports normally provide
+            # token timestamps, so this branch is only a compatibility guard.
+            text = _sentence_case(getattr(result, "text", ""))
+            if text:
+                fallback_tokens = [f"▁{word}" for word in text.split()]
+                span = max(window.keep_end - window.keep_start, 0.001)
+                for token_index, token in enumerate(fallback_tokens):
+                    start = window.keep_start + span * token_index / len(fallback_tokens)
+                    end = window.keep_start + span * (token_index + 1) / len(fallback_tokens)
+                    timed_units.append(TimedUnit(token, start, end))
+
+        if progress_callback:
+            progress_callback(index, len(windows))
+
+    assignments = assign_units_to_turns(timed_units, turns)
+    lines = []
+    for turn, units in zip(turns, assignments):
+        text = _clean_token_text([unit.text for unit in units])
+        if text:
+            lines.append(format_speaker_turn(turn, text))
     return "\n".join(lines)

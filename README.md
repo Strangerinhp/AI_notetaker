@@ -20,6 +20,17 @@ python app.py --no-database --api
 
 Nếu không có `--api`, bước tóm tắt dùng model Ollama `gemma4:e2b`.
 
+## Quy trình duyệt transcript trước khi tóm tắt
+
+MeetNote không còn gọi LLM ngay sau khi phiên âm. Luồng xử lý hiện tại là:
+
+1. Tạo transcript và, nếu được bật, chạy speaker diarization.
+2. Mở transcript trong Markdown editor để người dùng kiểm tra.
+3. Hiển thị timeline các lượt nói và cho phép đổi tên một speaker trên toàn bộ
+   transcript, ví dụ `người nói 1` thành `Giám đốc An`.
+4. Chỉ khi người dùng bấm **Tóm tắt transcript**, nội dung đã chỉnh sửa mới được
+   gửi tới Ollama hoặc Gemini.
+
 ## Demo một ngày trên Google Colab với Ollama
 
 Chọn `Runtime → Change runtime type → T4 GPU`, sau đó chạy lần lượt các cell.
@@ -339,8 +350,9 @@ SQLSERVER_PASSWORD
 ## Bảng MeetingHistory
 
 Bảng lưu UUID, tên báo cáo, thứ tự file audio, engine, transcript, biên bản,
-trạng thái, số file, tổng dung lượng, thời điểm tạo, hoàn tất, chỉnh sửa cuối và
-cập nhật cuối. Sidebar chỉ hiển thị các dòng có `Status = 'completed'`.
+timeline diarization, trạng thái, số file, tổng dung lượng, thời điểm tạo, hoàn
+tất, chỉnh sửa cuối và cập nhật cuối. Sidebar hiển thị cả cuộc họp đang chờ duyệt
+transcript, đang tóm tắt, tóm tắt lỗi và đã hoàn tất.
 
 Khi bấm Lưu trong Markdown editor, `LastEditedAt` và `UpdatedAt` được cập nhật.
 DOCX chỉ được tạo trong bộ nhớ khi người dùng bấm tải.

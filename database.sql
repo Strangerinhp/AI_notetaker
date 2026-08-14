@@ -22,6 +22,8 @@ BEGIN
             CONSTRAINT DF_MeetingHistory_Transcript DEFAULT N'',
         Minutes NVARCHAR(MAX) NOT NULL
             CONSTRAINT DF_MeetingHistory_Minutes DEFAULT N'',
+        DiarizationSegments NVARCHAR(MAX) NOT NULL
+            CONSTRAINT DF_MeetingHistory_DiarizationSegments DEFAULT N'[]',
         Status NVARCHAR(32) NOT NULL
             CONSTRAINT DF_MeetingHistory_Status DEFAULT N'queued',
         StatusMessage NVARCHAR(500) NOT NULL

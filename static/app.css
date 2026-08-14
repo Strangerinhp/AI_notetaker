@@ -283,7 +283,7 @@ svg {
   font-weight: 650; letter-spacing: -.045em; line-height: 1.15;
 }
 .meeting-heading p { margin: 9px 0 0; color: var(--faint); font-size: 9px; }
-.meeting-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.meeting-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex: 0 0 auto; }
 .tabs {
   width: fit-content; display: flex; gap: 3px; margin-bottom: 11px; padding: 4px;
   background: #e9e9e5; border-radius: 10px;
@@ -295,6 +295,63 @@ svg {
 }
 .tab svg { width: 14px; height: 14px; }
 .tab.active { color: var(--text); background: white; box-shadow: 0 1px 5px rgba(30,30,28,.08); }
+.tab:disabled { opacity: .42; cursor: not-allowed; }
+
+.transcript-inspector {
+  display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(230px, .75fr);
+  gap: 11px; margin-bottom: 11px;
+}
+.timeline-card, .speaker-card {
+  min-width: 0; padding: 17px 18px; background: white;
+  border: 1px solid var(--line); border-radius: 13px;
+  box-shadow: 0 8px 30px rgba(31,31,28,.045);
+}
+.timeline-card header, .speaker-card header {
+  display: flex; align-items: start; justify-content: space-between; gap: 12px;
+}
+.timeline-card header small, .speaker-card header small {
+  color: var(--blue); font-size: 7px; font-weight: 850; letter-spacing: .13em;
+}
+.timeline-card h2, .speaker-card h2 { margin: 4px 0 0; font-size: 13px; }
+.timeline-card header > span { color: var(--faint); font-size: 8px; white-space: nowrap; }
+.speaker-timeline { margin-top: 16px; overflow-x: auto; padding-bottom: 2px; }
+.timeline-row, .timeline-axis {
+  min-width: 520px; display: grid; grid-template-columns: 96px minmax(400px, 1fr);
+  gap: 10px; align-items: center;
+}
+.timeline-row { min-height: 25px; }
+.timeline-row > span {
+  overflow: hidden; color: var(--muted); font-size: 8px; font-weight: 700;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.timeline-lane {
+  position: relative; height: 13px;
+  background-image: linear-gradient(to right, #ecece8 1px, transparent 1px);
+  background-size: 25% 100%; border-bottom: 1px solid #ecece8;
+}
+.timeline-lane i {
+  position: absolute; top: 2px; min-width: 2px; height: 8px;
+  border-radius: 2px; opacity: .88;
+}
+.timeline-lane i:hover { top: 0; height: 12px; opacity: 1; }
+.timeline-axis { height: 20px; }
+.timeline-axis > div { position: relative; height: 100%; }
+.timeline-axis > div span {
+  position: absolute; top: 4px; color: var(--faint); font-size: 7px;
+  transform: translateX(-50%);
+}
+.timeline-axis > div span:first-child { transform: none; }
+.timeline-axis > div span:last-child { transform: translateX(-100%); }
+.speaker-card > p { margin: 8px 0 13px; color: var(--faint); font-size: 8px; line-height: 1.5; }
+.speaker-renames { max-height: 205px; overflow-y: auto; display: grid; gap: 8px; }
+.speaker-rename { display: grid; grid-template-columns: minmax(70px,.7fr) minmax(110px,1fr); gap: 8px; align-items: center; }
+.speaker-rename span { overflow: hidden; color: var(--faint); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.speaker-rename input {
+  min-width: 0; height: 32px; padding: 0 9px; color: var(--text); background: #f8f8f6;
+  border: 1px solid var(--line); border-radius: 7px; outline: none; font-size: 9px;
+}
+.speaker-rename input:focus { background: white; border-color: #a4afe8; box-shadow: 0 0 0 3px var(--blue-soft); }
+.speaker-card > button { width: 100%; min-height: 34px; margin-top: 12px; }
 
 .editor { overflow: hidden; }
 .toolbar {
@@ -328,6 +385,7 @@ svg {
   color: #2c2c29; background: white; border: 0; outline: 0;
   font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.75;
 }
+#markdown-input:disabled { color: var(--faint); background: #f8f8f6; cursor: wait; }
 .preview-pane { overflow: hidden; }
 .markdown {
   min-height: 500px; flex: 1; overflow: auto; overflow-wrap: anywhere;
@@ -392,6 +450,7 @@ svg {
     gap: 28px; padding-inline: 26px;
   }
   .processing-card { grid-column: 2; }
+  .transcript-inspector { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 650px) {
@@ -403,7 +462,7 @@ svg {
   .meeting-heading { flex-direction: column; }
   .meeting-heading h1 { font-size: 28px; }
   .meeting-actions { width: 100%; }
-  .meeting-actions button { flex: 1; }
+  .meeting-actions button { flex: 1 1 calc(50% - 8px); }
   .toolbar { flex-wrap: wrap; }
   .view-modes { width: 100%; margin-left: 0; }
   .view-modes button { flex: 1; }

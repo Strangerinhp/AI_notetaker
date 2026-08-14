@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -79,6 +80,11 @@ def _row_to_meeting(cursor, row):
     for key in ("created_at", "completed_at", "last_edited_at", "updated_at"):
         if key in values:
             values[key] = _iso_utc(values.get(key))
+    raw_segments = values.pop("diarization_segments_json", "[]") or "[]"
+    try:
+        values["diarization_segments"] = json.loads(raw_segments)
+    except (TypeError, ValueError):
+        values["diarization_segments"] = []
     return values
 
 
@@ -174,6 +180,39 @@ def update_meeting_status(job_id, status, message):
         connection.close()
 
 
+def complete_transcription(job_id, transcript, diarization_segments=None):
+    """Persist ASR output while leaving summarization for explicit user action."""
+    segments_json = json.dumps(
+        diarization_segments or [],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE dbo.MeetingHistory
+            SET Transcript = ?, DiarizationSegments = ?,
+                Status = 'transcript_ready',
+                StatusMessage = N'Transcript đã sẵn sàng để kiểm tra.',
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE Id = ?
+            """,
+            transcript,
+            segments_json,
+            str(job_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    except pyodbc.Error as error:
+        connection.rollback()
+        raise _friendly_error(error) from error
+    finally:
+        cursor.close()
+        connection.close()
+
+
 def complete_meeting(job_id, transcript, minutes):
     connection = get_connection()
     cursor = connection.cursor()
@@ -213,6 +252,7 @@ def get_meeting(job_id):
                 Engine AS engine,
                 Transcript AS transcript,
                 Minutes AS summary,
+                DiarizationSegments AS diarization_segments_json,
                 Status AS status,
                 StatusMessage AS status_message,
                 FileCount AS file_count,
@@ -243,11 +283,12 @@ def get_meetings():
             SELECT
                 CONVERT(nvarchar(36), Id) AS id,
                 Title AS title,
+                Status AS status,
                 CreatedAt AS created_at,
                 LastEditedAt AS last_edited_at,
                 UpdatedAt AS updated_at
             FROM dbo.MeetingHistory
-            WHERE Status = 'completed'
+            WHERE Status IN ('transcript_ready', 'summarizing', 'summary_error', 'completed')
             ORDER BY UpdatedAt DESC
             """
         )
@@ -262,7 +303,16 @@ def get_meetings():
         connection.close()
 
 
-def update_meeting(job_id, transcript, minutes):
+def update_meeting(job_id, transcript, minutes, diarization_segments=None):
+    segments_json = (
+        json.dumps(
+            diarization_segments,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if diarization_segments is not None
+        else None
+    )
     connection = get_connection()
     cursor = connection.cursor()
     try:
@@ -270,12 +320,16 @@ def update_meeting(job_id, transcript, minutes):
             """
             UPDATE dbo.MeetingHistory
             SET Transcript = ?, Minutes = ?,
+                DiarizationSegments = COALESCE(?, DiarizationSegments),
                 LastEditedAt = SYSUTCDATETIME(),
                 UpdatedAt = SYSUTCDATETIME()
-            WHERE Id = ? AND Status = 'completed'
+            WHERE Id = ? AND Status IN (
+                'transcript_ready', 'summarizing', 'summary_error', 'completed'
+            )
             """,
             transcript,
             minutes,
+            segments_json,
             str(job_id),
         )
         connection.commit()

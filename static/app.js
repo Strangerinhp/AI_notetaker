@@ -4,7 +4,7 @@
   const state = {
     meetings: [],
     current: null,
-    document: "summary",
+    document: "transcript",
     files: [],
     poll: null,
     saveTimer: null,
@@ -53,8 +53,20 @@
     saveButton: $("save-button"),
     downloadButton: $("download-button"),
     wordDownloadButton: $("word-download-button"),
+    summarizeButton: $("summarize-button"),
+    summaryTab: $("summary-tab"),
+    transcriptInspector: $("transcript-inspector"),
+    speakerTimeline: $("speaker-timeline"),
+    timelineStats: $("timeline-stats"),
+    speakerRenames: $("speaker-renames"),
+    applySpeakerNames: $("apply-speaker-names"),
     toasts: $("toasts"),
   };
+
+  const speakerColors = [
+    "#3856e8", "#2b8a6e", "#d47b28", "#8d54c7", "#cf4f63",
+    "#1684a5", "#7e8c2d", "#8d6655", "#5369a8", "#aa4d98",
+  ];
 
   function escapeHtml(value) {
     return String(value)
@@ -209,6 +221,159 @@
       `${words.toLocaleString("vi-VN")} từ · ${content.length.toLocaleString("vi-VN")} ký tự`;
   }
 
+  function formatClock(seconds) {
+    const value = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(value / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const remainder = value % 60;
+    return hours
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+      : `${minutes}:${String(remainder).padStart(2, "0")}`;
+  }
+
+  function timelineSegments() {
+    const segments = state.current?.diarization_segments;
+    return Array.isArray(segments) ? segments : [];
+  }
+
+  function timelineSpeakers() {
+    const speakers = [];
+    const seen = new Set();
+    timelineSegments().forEach((segment) => {
+      const speaker = String(segment.speaker || "").trim();
+      const key = speaker.toLocaleLowerCase("vi");
+      if (speaker && !seen.has(key)) {
+        seen.add(key);
+        speakers.push(speaker);
+      }
+    });
+    return speakers;
+  }
+
+  function renderSpeakerTimeline() {
+    const segments = timelineSegments();
+    const speakers = timelineSpeakers();
+    ui.speakerTimeline.replaceChildren();
+    ui.speakerRenames.replaceChildren();
+
+    if (!segments.length || !speakers.length) return;
+    const duration = Math.max(...segments.map((segment) => Number(segment.end) || 0), 1);
+    ui.timelineStats.textContent =
+      `${speakers.length} người nói · ${segments.length} lượt · ${formatClock(duration)}`;
+
+    speakers.forEach((speaker, speakerIndex) => {
+      const row = document.createElement("div");
+      row.className = "timeline-row";
+      const label = document.createElement("span");
+      label.textContent = speaker;
+      label.title = speaker;
+      const lane = document.createElement("div");
+      lane.className = "timeline-lane";
+
+      segments
+        .filter((segment) => segment.speaker === speaker)
+        .forEach((segment) => {
+          const block = document.createElement("i");
+          const start = Math.max(0, Number(segment.start) || 0);
+          const end = Math.max(start, Number(segment.end) || start);
+          block.style.left = `${(start / duration) * 100}%`;
+          block.style.width = `${Math.max(((end - start) / duration) * 100, 0.12)}%`;
+          block.style.backgroundColor = speakerColors[speakerIndex % speakerColors.length];
+          block.title = `${speaker}: ${formatClock(start)} – ${formatClock(end)}`;
+          lane.appendChild(block);
+        });
+      row.append(label, lane);
+      ui.speakerTimeline.appendChild(row);
+
+      const rename = document.createElement("label");
+      rename.className = "speaker-rename";
+      const original = document.createElement("span");
+      original.textContent = speaker;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 200;
+      input.value = speaker;
+      input.dataset.originalSpeaker = speaker;
+      input.setAttribute("aria-label", `Tên mới cho ${speaker}`);
+      rename.append(original, input);
+      ui.speakerRenames.appendChild(rename);
+    });
+
+    const axis = document.createElement("div");
+    axis.className = "timeline-axis";
+    const spacer = document.createElement("span");
+    const ticks = document.createElement("div");
+    for (let index = 0; index <= 4; index += 1) {
+      const tick = document.createElement("span");
+      tick.style.left = `${index * 25}%`;
+      tick.textContent = formatClock((duration * index) / 4);
+      ticks.appendChild(tick);
+    }
+    axis.append(spacer, ticks);
+    ui.speakerTimeline.appendChild(axis);
+  }
+
+  function updateMeetingControls() {
+    const transcriptMode = state.document === "transcript";
+    const hasTimeline = timelineSegments().length > 0;
+    const summarizing = state.current?.status === "summarizing";
+    const hasSummary = Boolean(state.current?.summary?.trim());
+
+    ui.transcriptInspector.classList.toggle("hidden", !transcriptMode || !hasTimeline);
+    ui.summarizeButton.classList.toggle("hidden", !transcriptMode);
+    ui.summarizeButton.disabled = summarizing || !state.current?.transcript?.trim();
+    ui.summarizeButton.querySelector("span").textContent = summarizing
+      ? "Đang tóm tắt..."
+      : hasSummary
+        ? "Tạo lại tóm tắt"
+        : "Tóm tắt transcript";
+    ui.summaryTab.disabled = !hasSummary;
+    ui.markdownInput.disabled = summarizing;
+    ui.wordDownloadButton.disabled = !state.current?.[state.document]?.trim();
+    if (transcriptMode && hasTimeline) renderSpeakerTimeline();
+  }
+
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function applySpeakerRenames() {
+    if (!state.current || state.document !== "transcript") return;
+    storeEditorValue();
+    const mapping = new Map();
+    ui.speakerRenames.querySelectorAll("input[data-original-speaker]").forEach((input) => {
+      const original = input.dataset.originalSpeaker.trim();
+      const replacement = input.value.trim();
+      if (original && replacement && replacement !== original) {
+        mapping.set(original.toLocaleLowerCase("vi"), replacement);
+      }
+    });
+    if (!mapping.size) {
+      toast("Chưa có tên người nói nào thay đổi.");
+      return;
+    }
+
+    const aliases = timelineSpeakers().sort((a, b) => b.length - a.length);
+    const pattern = new RegExp(
+      `(^\\s*(?:\\[[^\\]\\n]+\\]\\s*)?)(${aliases.map(escapeRegExp).join("|")})(?=\\s*:)`,
+      "gimu",
+    );
+    state.current.transcript = state.current.transcript.replace(
+      pattern,
+      (match, prefix, speaker) =>
+        `${prefix}${mapping.get(speaker.toLocaleLowerCase("vi")) || speaker}`,
+    );
+    state.current.diarization_segments = timelineSegments().map((segment) => ({
+      ...segment,
+      speaker: mapping.get(String(segment.speaker).toLocaleLowerCase("vi")) || segment.speaker,
+    }));
+    ui.markdownInput.value = state.current.transcript;
+    updateEditor();
+    updateMeetingControls();
+    queueSave();
+    toast("Đã thay tên trong toàn bộ transcript.");
+  }
+
   async function showUpload() {
     if (state.saveTimer) {
       window.clearTimeout(state.saveTimer);
@@ -226,8 +391,12 @@
     history.replaceState(null, "", location.pathname);
   }
 
-  async function openMeeting(id) {
-    if (state.current?.id === id) {
+  async function openMeeting(id, preferredDocument = null, force = false) {
+    if (state.current?.id === id && !force) {
+      if (preferredDocument) {
+        state.document = preferredDocument;
+        loadDocument();
+      }
       closeSidebar();
       return;
     }
@@ -240,9 +409,16 @@
     try {
       setSaveStatus("saving", "Đang mở...");
       state.current = await api(`/api/meetings/${encodeURIComponent(id)}`);
-      state.document = "summary";
+      state.document = preferredDocument || (state.current.summary?.trim() ? "summary" : "transcript");
       ui.meetingTitle.textContent = state.current.title;
-      ui.meetingMeta.textContent = formatDate(state.current.updated_at, true);
+      const statusText = state.current.status === "transcript_ready"
+        ? "Transcript đã sẵn sàng"
+        : state.current.status === "summary_error"
+          ? "Có lỗi khi tóm tắt — transcript vẫn an toàn"
+          : state.current.status === "summarizing"
+            ? "Đang tạo bản tóm tắt"
+            : "Đã hoàn tất";
+      ui.meetingMeta.textContent = `${statusText} · ${formatDate(state.current.updated_at, true)}`;
       ui.pageKicker.textContent = "Ghi chú cuộc họp";
       ui.pageTitle.textContent = state.current.title;
       ui.uploadView.classList.add("hidden");
@@ -264,6 +440,7 @@
       tab.classList.toggle("active", tab.dataset.document === state.document);
     });
     updateEditor();
+    updateMeetingControls();
   }
 
   function queueSave() {
@@ -294,11 +471,13 @@
           body: JSON.stringify({
             summary: state.current.summary,
             transcript: state.current.transcript,
+            diarization_segments: state.current.diarization_segments || [],
           }),
         },
       );
       ui.meetingTitle.textContent = state.current.title;
       ui.pageTitle.textContent = state.current.title;
+      updateMeetingControls();
       setSaveStatus("saved", "Đã lưu");
       await loadHistory();
       if (!silent) toast("Đã lưu thay đổi.");
@@ -356,6 +535,7 @@
       splitting: ["Đang chuẩn bị audio...", 28],
       diarizing: ["Đang tách người nói...", 46],
       transcribing: ["Đang tạo transcript...", 70],
+      transcript_ready: ["Transcript đã sẵn sàng", 100],
       summarizing: ["Đang tạo bản tóm tắt...", 88],
       completed: ["Hoàn tất", 100],
     };
@@ -400,12 +580,13 @@
       try {
         const payload = await api(`/status/${encodeURIComponent(jobId)}`);
         setProgress(payload.status, payload.message);
-        if (payload.status === "completed") {
+        if (payload.status === "transcript_ready") {
           window.clearInterval(state.poll);
           state.poll = null;
           await loadHistory();
-          await openMeeting(jobId);
+          await openMeeting(jobId, "transcript");
           resetUpload();
+          toast("Transcript đã sẵn sàng. Hãy kiểm tra trước khi tóm tắt.");
         } else if (payload.status === "error") {
           throw new Error(payload.message);
         }
@@ -437,6 +618,82 @@
     ui.uploadButton.disabled = true;
     ui.uploadCard.classList.remove("hidden");
     ui.processingCard.classList.add("hidden");
+  }
+
+  async function summarizeTranscript() {
+    if (!state.current || state.document !== "transcript") return;
+    storeEditorValue();
+    if (!state.current.transcript.trim()) {
+      toast("Transcript đang trống.", true);
+      return;
+    }
+    if (state.saveTimer) {
+      window.clearTimeout(state.saveTimer);
+      state.saveTimer = null;
+    }
+
+    try {
+      while (state.saving) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      const saved = await saveMeeting(true);
+      if (!saved) throw new Error("Chưa lưu được transcript mới nhất.");
+
+      await api(
+        `/api/meetings/${encodeURIComponent(state.current.id)}/summarize`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: state.current.transcript,
+            summary: state.current.summary || "",
+            diarization_segments: state.current.diarization_segments || [],
+          }),
+        },
+      );
+      state.current.status = "summarizing";
+      updateMeetingControls();
+      setSaveStatus("saving", "Đang tóm tắt...");
+      toast("Đã gửi transcript đã chỉnh sửa tới LLM.");
+      pollSummary(state.current.id);
+    } catch (error) {
+      updateMeetingControls();
+      setSaveStatus("error", "Không thể tóm tắt");
+      toast(error.message, true);
+    }
+  }
+
+  function pollSummary(jobId) {
+    if (state.poll) window.clearInterval(state.poll);
+    const poll = async () => {
+      try {
+        const payload = await api(`/status/${encodeURIComponent(jobId)}`);
+        if (payload.status === "completed") {
+          window.clearInterval(state.poll);
+          state.poll = null;
+          await loadHistory();
+          await openMeeting(jobId, "summary", true);
+          toast("Bản tóm tắt đã hoàn tất.");
+        } else if (payload.status === "summary_error") {
+          window.clearInterval(state.poll);
+          state.poll = null;
+          await openMeeting(jobId, "transcript", true);
+          setSaveStatus("error", "Tóm tắt thất bại");
+          toast(payload.message || "Không thể tạo bản tóm tắt.", true);
+        } else if (payload.status === "error") {
+          throw new Error(payload.message);
+        }
+      } catch (error) {
+        if (state.poll) window.clearInterval(state.poll);
+        state.poll = null;
+        if (state.current) state.current.status = "summary_error";
+        updateMeetingControls();
+        setSaveStatus("error", "Tóm tắt thất bại");
+        toast(error.message, true);
+      }
+    };
+    poll();
+    state.poll = window.setInterval(poll, 3000);
   }
 
   function applyFormat(format) {
@@ -576,7 +833,11 @@
 
     document.querySelectorAll(".tab").forEach((tab) => {
       tab.addEventListener("click", () => {
-        if (!state.current || state.document === tab.dataset.document) return;
+        if (
+          !state.current ||
+          tab.disabled ||
+          state.document === tab.dataset.document
+        ) return;
         storeEditorValue();
         state.document = tab.dataset.document;
         loadDocument();
@@ -591,9 +852,12 @@
     ui.markdownInput.addEventListener("input", () => {
       storeEditorValue();
       updateEditor();
+      updateMeetingControls();
       queueSave();
     });
     ui.saveButton.addEventListener("click", () => saveMeeting());
+    ui.summarizeButton.addEventListener("click", summarizeTranscript);
+    ui.applySpeakerNames.addEventListener("click", applySpeakerRenames);
     ui.downloadButton.addEventListener("click", downloadDocument);
     ui.wordDownloadButton.addEventListener("click", downloadWordDocument);
     document.addEventListener("keydown", (event) => {

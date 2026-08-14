@@ -13,6 +13,7 @@ Sau đó mở trình duyệt: http://localhost:5001
 
 import argparse
 import io
+import math
 import os
 import re
 import shutil
@@ -28,6 +29,7 @@ from database import (
     DatabaseError,
     check_database,
     complete_meeting,
+    complete_transcription,
     get_meeting,
     get_meetings,
     insert_meeting,
@@ -107,6 +109,7 @@ def _job_to_meeting(job_id: str, job: dict) -> dict:
         "engine": job.get("engine", ""),
         "transcript": job.get("transcript", ""),
         "summary": job.get("minutes", ""),
+        "diarization_segments": job.get("diarization_segments", []),
         "status": job.get("status", "queued"),
         "status_message": job.get("message", ""),
         "file_count": job.get("file_count", 1),
@@ -133,33 +136,90 @@ def get_stored_meetings() -> list[dict]:
         meetings = [
             _job_to_meeting(job_id, job)
             for job_id, job in jobs.items()
-            if job.get("status") == "completed"
+            if job.get("status")
+            in {"transcript_ready", "summarizing", "summary_error", "completed"}
         ]
     meetings.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
     return [
         {
             key: meeting.get(key)
-            for key in ("id", "title", "created_at", "last_edited_at", "updated_at")
+            for key in (
+                "id",
+                "title",
+                "status",
+                "created_at",
+                "last_edited_at",
+                "updated_at",
+            )
         }
         for meeting in meetings
     ]
 
 
-def save_stored_meeting(job_id: str, transcript: str, minutes: str):
+def save_stored_meeting(
+    job_id: str,
+    transcript: str,
+    minutes: str,
+    diarization_segments: list[dict] | None = None,
+):
     if database_enabled():
-        return save_meeting(job_id, transcript, minutes)
+        return save_meeting(job_id, transcript, minutes, diarization_segments)
     with jobs_lock:
         job = jobs.get(job_id)
-        if not job or job.get("status") != "completed":
+        if not job or job.get("status") not in {
+            "transcript_ready",
+            "summarizing",
+            "summary_error",
+            "completed",
+        }:
             return None
         edited_at = utc_now()
         job.update(
             transcript=transcript,
             minutes=minutes,
+            diarization_segments=(
+                diarization_segments
+                if diarization_segments is not None
+                else job.get("diarization_segments", [])
+            ),
             last_edited_at=edited_at,
             updated_at=edited_at,
         )
         return _job_to_meeting(job_id, job)
+
+
+def validate_diarization_segments(value) -> list[dict] | None:
+    """Validate compact, path-free speaker timeline data received from the UI."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 100_000:
+        raise ValueError("Dữ liệu timeline người nói không hợp lệ.")
+
+    clean_segments = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("Dữ liệu timeline người nói không hợp lệ.")
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Mốc thời gian người nói không hợp lệ.") from error
+        speaker = " ".join(str(item.get("speaker", "")).split())
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(end)
+            or start < 0
+            or end <= start
+            or not speaker
+            or len(speaker) > 200
+        ):
+            raise ValueError("Dữ liệu timeline người nói không hợp lệ.")
+        clean_segments.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "speaker": speaker,
+        })
+    return clean_segments
 
 
 def strip_transcript_timestamps(transcript: str) -> str:
@@ -324,29 +384,33 @@ def process_audio_files(
         # Chuẩn hóa một lần tại đây để transcript hiển thị và lưu dưới dạng chữ thường.
         transcript = transcript.lower()
 
-        update_job_status(
+        diarization_segments = (
+            [
+                {
+                    "start": round(turn.start, 3),
+                    "end": round(turn.end, 3),
+                    "speaker": turn.speaker.lower(),
+                }
+                for turn in diarization_result.turns
+            ]
+            if diarization_result
+            else []
+        )
+
+        if database_enabled() and not complete_transcription(
             job_id,
-            "summarizing",
-            "Đang tóm tắt thành biên bản họp...",
-        )
-        minutes = summarize_transcript(
-            strip_transcript_timestamps(transcript),
-            model=OLLAMA_MODEL,
-            use_gemini_api=app.config["USE_GEMINI_API"],
-            meeting_title=meeting_title,
-        )
+            transcript,
+            diarization_segments,
+        ):
+            raise DatabaseError("Không tìm thấy cuộc họp để lưu transcript.")
 
-        if database_enabled() and not complete_meeting(job_id, transcript, minutes):
-            raise DatabaseError("Không tìm thấy cuộc họp để lưu kết quả.")
-
-        completed_at = utc_now()
         update_job(
             job_id,
-            status="completed",
-            message="Hoàn tất!",
+            status="transcript_ready",
+            message="Transcript đã sẵn sàng để kiểm tra và chỉnh sửa.",
             transcript=transcript,
-            minutes=minutes,
-            completed_at=completed_at,
+            minutes="",
+            diarization_segments=diarization_segments,
         )
 
     except Exception as e:
@@ -363,6 +427,37 @@ def process_audio_files(
         cleanup_files(segment_paths)
         shutil.rmtree(segment_dir, ignore_errors=True)
         cleanup_files(file_paths)
+
+
+def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
+    """Summarize the exact transcript revision submitted by the user."""
+    try:
+        minutes = summarize_transcript(
+            strip_transcript_timestamps(transcript),
+            model=OLLAMA_MODEL,
+            use_gemini_api=app.config["USE_GEMINI_API"],
+            meeting_title=meeting_title,
+        )
+        if database_enabled() and not complete_meeting(job_id, transcript, minutes):
+            raise DatabaseError("Không tìm thấy cuộc họp để lưu bản tóm tắt.")
+
+        completed_at = utc_now()
+        update_job(
+            job_id,
+            status="completed",
+            message="Hoàn tất!",
+            transcript=transcript,
+            minutes=minutes,
+            completed_at=completed_at,
+        )
+    except Exception as error:
+        error_message = f"Tóm tắt thất bại: {error}"
+        update_job(job_id, status="summary_error", message=error_message)
+        if database_enabled():
+            try:
+                update_meeting_status(job_id, "summary_error", error_message)
+            except DatabaseError:
+                app.logger.exception("Không thể lưu lỗi tóm tắt vào SQL Server")
 
 
 @app.route("/")
@@ -463,6 +558,7 @@ def upload_file():
             "diarization": diarization_enabled,
             "transcript": "",
             "minutes": "",
+            "diarization_segments": [],
             "created_at": created_at,
             "completed_at": None,
             "last_edited_at": None,
@@ -495,11 +591,12 @@ def job_status(job_id):
     if job is None:
         return jsonify({"error": "Không tìm thấy job"}), 404
 
-    # Không cần trả transcript/minutes đầy đủ trong lúc polling để tiết kiệm băng thông
+    # Không trả tài liệu lớn trong lúc model vẫn đang chạy để tiết kiệm băng thông.
     response = {"status": job["status"], "message": job["message"]}
-    if job["status"] == "completed":
+    if job["status"] in {"transcript_ready", "summary_error", "completed"}:
         response["transcript"] = job["transcript"]
         response["minutes"] = job["minutes"]
+        response["diarization_segments"] = job.get("diarization_segments", [])
 
     return jsonify(response)
 
@@ -526,11 +623,97 @@ def update_meeting(result_id):
         return jsonify({"error": "Nội dung không hợp lệ"}), 400
     if len(summary) > 20_000_000 or len(transcript) > 20_000_000:
         return jsonify({"error": "Nội dung quá lớn"}), 413
+    try:
+        diarization_segments = validate_diarization_segments(
+            payload.get("diarization_segments")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
-    meeting = save_stored_meeting(result_id, transcript, summary)
+    meeting = save_stored_meeting(
+        result_id,
+        transcript,
+        summary,
+        diarization_segments,
+    )
     if not meeting:
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
     return jsonify(meeting)
+
+
+@app.route("/api/meetings/<result_id>/summarize", methods=["POST"])
+def summarize_saved_transcript(result_id):
+    payload = request.get_json(silent=True) or {}
+    transcript = payload.get("transcript")
+    summary = payload.get("summary", "")
+    if not isinstance(transcript, str) or not transcript.strip():
+        return jsonify({"error": "Transcript đang trống."}), 400
+    if not isinstance(summary, str):
+        return jsonify({"error": "Nội dung tóm tắt không hợp lệ."}), 400
+    if len(transcript) > 20_000_000 or len(summary) > 20_000_000:
+        return jsonify({"error": "Nội dung quá lớn"}), 413
+    try:
+        diarization_segments = validate_diarization_segments(
+            payload.get("diarization_segments")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    meeting = get_stored_meeting(result_id)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+    if meeting.get("status") == "summarizing":
+        return jsonify({"error": "Cuộc họp này đang được tóm tắt."}), 409
+    if meeting.get("status") not in {
+        "transcript_ready",
+        "summary_error",
+        "completed",
+    }:
+        return jsonify({"error": "Transcript chưa sẵn sàng để tóm tắt."}), 409
+
+    meeting = save_stored_meeting(
+        result_id,
+        transcript,
+        summary,
+        diarization_segments,
+    )
+    if not meeting:
+        return jsonify({"error": "Không thể lưu transcript trước khi tóm tắt."}), 409
+
+    message = "Đang tóm tắt transcript đã chỉnh sửa..."
+    if database_enabled():
+        update_meeting_status(result_id, "summarizing", message)
+
+    with jobs_lock:
+        cached = jobs.setdefault(result_id, {})
+        cached.update({
+            "title": meeting.get("title", "Kết luận cuộc họp"),
+            "filename": meeting.get("filename", ""),
+            "engine": meeting.get("engine", ""),
+            "file_count": meeting.get("file_count", 1),
+            "total_audio_bytes": meeting.get("total_audio_bytes", 0),
+            "transcript": transcript,
+            "minutes": summary,
+            "diarization_segments": (
+                diarization_segments
+                if diarization_segments is not None
+                else meeting.get("diarization_segments", [])
+            ),
+            "status": "summarizing",
+            "message": message,
+            "created_at": meeting.get("created_at"),
+            "completed_at": meeting.get("completed_at"),
+            "last_edited_at": meeting.get("last_edited_at"),
+            "updated_at": utc_now(),
+        })
+
+    thread = threading.Thread(
+        target=summarize_meeting,
+        args=(result_id, transcript, meeting["title"]),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify({"job_id": result_id, "status": "summarizing"}), 202
 
 
 @app.route("/api/meetings/<result_id>/word")
@@ -604,7 +787,6 @@ if __name__ == "__main__":
             check_database()
         except DatabaseError as error:
             print(f"[SQL Server] {error}")
-            print("[SQL Server] Hãy chạy database.sql trong SSMS trước khi mở app.")
             raise SystemExit(1) from error
     else:
         print(

@@ -154,6 +154,10 @@
             <p id="meeting-meta"></p>
           </div>
           <div class="meeting-actions">
+            <button class="primary-button small hidden" id="summarize-button" type="button">
+              <svg viewBox="0 0 24 24"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m18 15 .9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15Z"/></svg>
+              <span>Tóm tắt transcript</span>
+            </button>
             <button class="secondary-button" id="word-download-button" type="button">
               <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
               Tải .docx
@@ -170,15 +174,33 @@
         </div>
 
         <div class="tabs" role="tablist">
-          <button class="tab active" type="button" data-document="summary">
-            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
-            Tóm tắt
-          </button>
-          <button class="tab" type="button" data-document="transcript">
+          <button class="tab active" type="button" data-document="transcript">
             <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg>
             Transcript
           </button>
+          <button class="tab" id="summary-tab" type="button" data-document="summary">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
+            Tóm tắt
+          </button>
         </div>
+
+        <section class="transcript-inspector hidden" id="transcript-inspector">
+          <article class="timeline-card">
+            <header>
+              <div><small>DIARIZATION</small><h2>Dòng thời gian người nói</h2></div>
+              <span id="timeline-stats"></span>
+            </header>
+            <div class="speaker-timeline" id="speaker-timeline"></div>
+          </article>
+          <aside class="speaker-card">
+            <header><small>ĐỔI TÊN HÀNG LOẠT</small><h2>Tên người nói</h2></header>
+            <p>Nhập tên hoặc chức danh mới rồi áp dụng cho toàn bộ transcript.</p>
+            <div class="speaker-renames" id="speaker-renames"></div>
+            <button class="secondary-button" id="apply-speaker-names" type="button">
+              Áp dụng vào transcript
+            </button>
+          </aside>
+        </section>
 
         <div class="editor">
           <div class="toolbar">

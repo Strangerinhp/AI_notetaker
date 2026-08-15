@@ -155,84 +155,133 @@
             <h1 id="meeting-title">Cuộc họp</h1>
             <p id="meeting-meta"></p>
           </div>
-          <div class="meeting-actions">
-            <button class="primary-button small hidden" id="summarize-button" type="button">
-              <svg viewBox="0 0 24 24"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m18 15 .9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15Z"/></svg>
-              <span>Tóm tắt transcript</span>
-            </button>
-            <button class="secondary-button" id="word-download-button" type="button">
-              <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
-              Tải .docx
-            </button>
-            <button class="secondary-button" id="download-button" type="button">
-              <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
-              Tải .md
-            </button>
-            <button class="primary-button small" id="save-button" type="button">
-              <svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
-              Lưu
-            </button>
+        </div>
+
+        <nav class="result-map" aria-label="Nội dung cuộc họp">
+          <a href="#transcript-workspace">
+            <span>01</span>
+            <div><strong>Transcript</strong><small>Kiểm tra và chỉnh sửa nội dung đầu vào</small></div>
+          </a>
+          <a href="#word-workspace">
+            <span>02</span>
+            <div><strong>Báo cáo Word</strong><small>Xem, tải xuống hoặc cập nhật file DOCX</small></div>
+          </a>
+        </nav>
+
+        <section class="workspace-section" id="transcript-workspace">
+          <header class="workspace-heading">
+            <div>
+              <small>BƯỚC 1 · NỘI DUNG NGUỒN</small>
+              <h2>Transcript cuộc họp</h2>
+              <p>Chỉnh sửa transcript và tên người nói trước khi gửi tới LLM.</p>
+            </div>
+            <div class="workspace-actions">
+              <button class="secondary-button" id="download-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
+                Tải transcript .md
+              </button>
+              <button class="secondary-button" id="save-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
+                Lưu transcript
+              </button>
+              <button class="primary-button small" id="summarize-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m18 15 .9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15Z"/></svg>
+                <span>Tóm tắt transcript</span>
+              </button>
+            </div>
+          </header>
+
+          <section class="transcript-inspector hidden" id="transcript-inspector">
+            <article class="timeline-card">
+              <header>
+                <div><small>DIARIZATION</small><h2>Dòng thời gian người nói</h2></div>
+                <span id="timeline-stats"></span>
+              </header>
+              <div class="speaker-timeline" id="speaker-timeline"></div>
+            </article>
+            <aside class="speaker-card">
+              <header><small>ĐỔI TÊN HÀNG LOẠT</small><h2>Tên người nói</h2></header>
+              <p>Nhập tên hoặc chức danh mới rồi áp dụng cho toàn bộ transcript.</p>
+              <div class="speaker-renames" id="speaker-renames"></div>
+              <button class="secondary-button" id="apply-speaker-names" type="button">
+                Áp dụng vào transcript
+              </button>
+            </aside>
+          </section>
+
+          <div class="editor">
+            <div class="toolbar">
+              <button type="button" data-format="heading">H2</button>
+              <button type="button" data-format="bold"><b>B</b></button>
+              <button type="button" data-format="italic"><em>I</em></button>
+              <span></span>
+              <button type="button" data-format="bullet">• List</button>
+              <button type="button" data-format="number">1. List</button>
+              <button type="button" data-format="quote">❝</button>
+              <button type="button" data-format="code">&lt;/&gt;</button>
+              <button type="button" data-format="link">Link</button>
+              <div class="view-modes">
+                <button type="button" data-mode="write">Viết</button>
+                <button class="active" type="button" data-mode="split">Chia đôi</button>
+                <button type="button" data-mode="preview">Xem</button>
+              </div>
+            </div>
+            <div class="editor-body split" id="editor-body">
+              <div class="source-pane">
+                <small>MARKDOWN</small>
+                <textarea id="markdown-input" spellcheck="true"></textarea>
+              </div>
+              <div class="preview-pane">
+                <small>XEM TRƯỚC</small>
+                <article class="markdown" id="markdown-preview"></article>
+              </div>
+            </div>
+            <footer><span id="document-stats">0 từ · 0 ký tự</span><span>Tự động lưu transcript</span></footer>
           </div>
-        </div>
-
-        <div class="tabs" role="tablist">
-          <button class="tab active" type="button" data-document="transcript">
-            <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg>
-            Transcript
-          </button>
-          <button class="tab" id="summary-tab" type="button" data-document="summary">
-            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
-            Tóm tắt
-          </button>
-        </div>
-
-        <section class="transcript-inspector hidden" id="transcript-inspector">
-          <article class="timeline-card">
-            <header>
-              <div><small>DIARIZATION</small><h2>Dòng thời gian người nói</h2></div>
-              <span id="timeline-stats"></span>
-            </header>
-            <div class="speaker-timeline" id="speaker-timeline"></div>
-          </article>
-          <aside class="speaker-card">
-            <header><small>ĐỔI TÊN HÀNG LOẠT</small><h2>Tên người nói</h2></header>
-            <p>Nhập tên hoặc chức danh mới rồi áp dụng cho toàn bộ transcript.</p>
-            <div class="speaker-renames" id="speaker-renames"></div>
-            <button class="secondary-button" id="apply-speaker-names" type="button">
-              Áp dụng vào transcript
-            </button>
-          </aside>
         </section>
 
-        <div class="editor">
-          <div class="toolbar">
-            <button type="button" data-format="heading">H2</button>
-            <button type="button" data-format="bold"><b>B</b></button>
-            <button type="button" data-format="italic"><em>I</em></button>
-            <span></span>
-            <button type="button" data-format="bullet">• List</button>
-            <button type="button" data-format="number">1. List</button>
-            <button type="button" data-format="quote">❝</button>
-            <button type="button" data-format="code">&lt;/&gt;</button>
-            <button type="button" data-format="link">Link</button>
-            <div class="view-modes">
-              <button type="button" data-mode="write">Viết</button>
-              <button class="active" type="button" data-mode="split">Chia đôi</button>
-              <button type="button" data-mode="preview">Xem</button>
+        <section class="workspace-section word-workspace" id="word-workspace">
+          <header class="workspace-heading">
+            <div>
+              <small>BƯỚC 2 · TÀI LIỆU CHÍNH THỨC</small>
+              <h2>Báo cáo Word</h2>
+              <p>Bản xem chỉ đọc của báo cáo DOCX hiện tại.</p>
+            </div>
+            <div class="workspace-actions">
+              <button class="secondary-button" id="word-download-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
+                Tải báo cáo .docx
+              </button>
+            </div>
+          </header>
+
+          <div class="word-update-bar">
+            <div class="word-file-info">
+              <span class="word-file-icon">W</span>
+              <div><strong id="word-file-name">Chưa có báo cáo Word</strong><small id="word-file-meta">Tóm tắt transcript để tạo file đầu tiên.</small></div>
+            </div>
+            <div class="word-update-actions" id="word-update-actions">
+              <label class="secondary-button word-upload-button" for="word-upload-input">
+                <svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+                Chọn file Word mới
+                <input id="word-upload-input" type="file" hidden accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+              </label>
+              <button class="primary-button" id="word-save-button" type="button" disabled>
+                <svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
+                Lưu file Word
+              </button>
             </div>
           </div>
-          <div class="editor-body split" id="editor-body">
-            <div class="source-pane">
-              <small>MARKDOWN</small>
-              <textarea id="markdown-input" spellcheck="true"></textarea>
+
+          <div class="word-viewer-shell">
+            <div class="word-placeholder" id="word-placeholder">
+              <span>W</span>
+              <h3>Chưa có báo cáo để hiển thị</h3>
+              <p>Hoàn tất transcript rồi bấm “Tóm tắt transcript”. File Word sẽ xuất hiện tại đây.</p>
             </div>
-            <div class="preview-pane">
-              <small>XEM TRƯỚC</small>
-              <article class="markdown" id="markdown-preview"></article>
-            </div>
+            <iframe class="word-frame hidden" id="word-frame" title="Bản xem báo cáo Word" sandbox></iframe>
           </div>
-          <footer><span id="document-stats">0 từ · 0 ký tự</span><span>Tự động lưu</span></footer>
-        </div>
+        </section>
       </section>
     </main>
   </div>

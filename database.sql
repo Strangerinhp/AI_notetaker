@@ -22,6 +22,9 @@ BEGIN
             CONSTRAINT DF_MeetingHistory_Transcript DEFAULT N'',
         Minutes NVARCHAR(MAX) NOT NULL
             CONSTRAINT DF_MeetingHistory_Minutes DEFAULT N'',
+        WordDocument VARBINARY(MAX) NULL,
+        WordFileName NVARCHAR(260) NULL,
+        WordUpdatedAt DATETIME2(3) NULL,
         DiarizationSegments NVARCHAR(MAX) NOT NULL
             CONSTRAINT DF_MeetingHistory_DiarizationSegments DEFAULT N'[]',
         Status NVARCHAR(32) NOT NULL
@@ -45,8 +48,27 @@ BEGIN
 END;
 GO
 
+-- Safe, idempotent migration for databases created by older MeetNote versions.
+IF COL_LENGTH(N'dbo.MeetingHistory', N'WordDocument') IS NULL
+BEGIN
+    ALTER TABLE dbo.MeetingHistory ADD WordDocument VARBINARY(MAX) NULL;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.MeetingHistory', N'WordFileName') IS NULL
+BEGIN
+    ALTER TABLE dbo.MeetingHistory ADD WordFileName NVARCHAR(260) NULL;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.MeetingHistory', N'WordUpdatedAt') IS NULL
+BEGIN
+    ALTER TABLE dbo.MeetingHistory ADD WordUpdatedAt DATETIME2(3) NULL;
+END;
+GO
+
 SELECT
-    Id, Title, FileName, Engine, Status,
+    Id, Title, FileName, Engine, Status, WordFileName, WordUpdatedAt,
     CreatedAt, LastEditedAt, UpdatedAt
 FROM dbo.MeetingHistory
 ORDER BY UpdatedAt DESC;

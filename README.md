@@ -1,6 +1,6 @@
 # MeetNote
 
-Ứng dụng Flask tạo transcript, biên bản Markdown và báo cáo Word từ một hoặc
+Ứng dụng Flask tạo transcript, biên bản và báo cáo Word từ một hoặc
 nhiều file audio. Mặc định lịch sử cuộc họp được lưu trong Microsoft SQL Server;
 có thể dùng `--no-database` cho demo tạm thời không cần database.
 
@@ -10,9 +10,11 @@ có thể dùng `--no-database` cho demo tạm thời không cần database.
 python app.py --no-database
 ```
 
-Chế độ này không kiểm tra, đọc hoặc ghi SQL Server. Sidebar, xem kết quả, sửa
-Markdown và tải DOCX vẫn hoạt động, nhưng dữ liệu chỉ nằm trong RAM và mất khi
-tiến trình Flask dừng. Có thể kết hợp với Gemini:
+Chế độ này không kiểm tra, đọc hoặc ghi SQL Server. Sidebar và transcript editor
+chỉ dùng dữ liệu trong RAM và mất khi tiến trình Flask dừng. Word viewer và tải
+DOCX vẫn hoạt động bằng cách tạo tài liệu theo từng yêu cầu; byte của file Word
+không được giữ trong RAM. Chức năng tải lên và lưu lại DOCX đã chỉnh sửa chỉ khả
+dụng khi app kết nối SQL Server. Có thể kết hợp với Gemini:
 
 ```powershell
 python app.py --no-database --api
@@ -31,6 +33,12 @@ MeetNote không còn gọi LLM ngay sau khi phiên âm. Luồng xử lý hiện 
    transcript, ví dụ `người nói 1` thành `Giám đốc An`.
 4. Chỉ khi người dùng bấm **Tóm tắt transcript**, nội dung đã chỉnh sửa mới được
    gửi tới Ollama hoặc Gemini.
+5. Bản tóm tắt được biên dịch thành DOCX và hiển thị trong Word viewer chỉ đọc,
+   không còn xuất hiện trong Markdown editor.
+6. Khi dùng SQL Server, người dùng có thể tải DOCX, chỉnh sửa bằng Microsoft Word
+   rồi chọn lại file và bấm **Lưu file Word**. File mới thay thế blob trong database
+   và viewer tải lại ngay lập tức. Ở chế độ `--no-database`, app chỉ cho xem hoặc
+   tải bản DOCX được tạo theo yêu cầu và không lưu file Word.
 
 ## Demo một ngày trên Google Colab với Ollama
 
@@ -315,6 +323,10 @@ Không cần nhập username/password khi dùng Windows Authentication.
 Trong SSMS chọn `File → Open → File`, mở file `database.sql` của repo, sau đó
 bấm **Execute** hoặc `F5`.
 
+Nếu database đã được tạo bởi phiên bản cũ, vẫn chạy lại file này một lần. Script
+chỉ thêm các cột nullable còn thiếu (`WordDocument`, `WordFileName`,
+`WordUpdatedAt`) và không xóa transcript hay lịch sử hiện có.
+
 Khi thành công, Object Explorer sẽ có:
 
 ```text
@@ -402,13 +414,15 @@ SQLSERVER_PASSWORD
 
 ## Bảng MeetingHistory
 
-Bảng lưu UUID, tên báo cáo, thứ tự file audio, engine, transcript, biên bản,
-timeline diarization, trạng thái, số file, tổng dung lượng, thời điểm tạo, hoàn
-tất, chỉnh sửa cuối và cập nhật cuối. Sidebar hiển thị cả cuộc họp đang chờ duyệt
+Bảng lưu UUID, tên báo cáo, thứ tự file audio, engine, transcript, Markdown nguồn
+của biên bản, file DOCX dạng `VARBINARY(MAX)`, tên file Word, timeline
+diarization, trạng thái, số file, tổng dung lượng, thời điểm tạo, hoàn tất, chỉnh
+sửa Word cuối và cập nhật cuối. Sidebar hiển thị cả cuộc họp đang chờ duyệt
 transcript, đang tóm tắt, tóm tắt lỗi và đã hoàn tất.
 
-Khi bấm Lưu trong Markdown editor, `LastEditedAt` và `UpdatedAt` được cập nhật.
-DOCX chỉ được tạo trong bộ nhớ khi người dùng bấm tải.
+Khi sửa transcript, `LastEditedAt` và `UpdatedAt` được cập nhật. Khi lưu một
+DOCX mới, `WordDocument`, `WordFileName`, `WordUpdatedAt`, `LastEditedAt` và
+`UpdatedAt` được cập nhật trong cùng transaction. Giới hạn upload Word là 25 MB.
 
 ## Nếu kết nối local vẫn thất bại
 

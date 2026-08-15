@@ -22,7 +22,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from audio_utils import cleanup_files, split_audio_files
@@ -33,9 +33,12 @@ from database import (
     complete_transcription,
     get_meeting,
     get_meetings,
+    get_word_document,
     insert_meeting,
+    store_generated_word_document,
     update_meeting as save_meeting,
     update_meeting_status,
+    update_word_document,
 )
 from summarize import GEMINI_MODEL, summarize_transcript
 from sliding_window_asr import build_sliding_windows
@@ -45,6 +48,7 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 TEMP_FOLDER = os.path.join(BASE_DIR, "temp_segments")
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "ogg", "flac", "webm"}
+MAX_WORD_DOCUMENT_BYTES = 25 * 1024 * 1024
 SEGMENT_MINUTES = 2
 NGHIASR_SEGMENT_MINUTES = 0.5
 ZIPFORMER_SEGMENT_MINUTES = 0.5
@@ -103,7 +107,7 @@ app.config["USE_DATABASE"] = True
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # tổng request tối đa 2 GB
 
 # Trạng thái polling luôn nằm trong RAM. Khi --no-database được bật, cùng dict
-# này cũng là kho lưu tạm cho sidebar, Markdown editor và Word export.
+# này cũng là kho tạm cho sidebar và transcript; blob DOCX không được lưu ở đây.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 
@@ -141,6 +145,10 @@ def _job_to_meeting(job_id: str, job: dict) -> dict:
         "engine": job.get("engine", ""),
         "transcript": job.get("transcript", ""),
         "summary": job.get("minutes", ""),
+        "has_word_document": False,
+        "word_filename": None,
+        "word_updated_at": None,
+        "word_storage_enabled": False,
         "diarization_segments": job.get("diarization_segments", []),
         "status": job.get("status", "queued"),
         "status_message": job.get("message", ""),
@@ -155,7 +163,10 @@ def _job_to_meeting(job_id: str, job: dict) -> dict:
 
 def get_stored_meeting(job_id: str):
     if database_enabled():
-        return get_meeting(job_id)
+        meeting = get_meeting(job_id)
+        if meeting:
+            meeting["word_storage_enabled"] = True
+        return meeting
     with jobs_lock:
         job = jobs.get(job_id)
         return _job_to_meeting(job_id, job) if job else None
@@ -191,11 +202,14 @@ def get_stored_meetings() -> list[dict]:
 def save_stored_meeting(
     job_id: str,
     transcript: str,
-    minutes: str,
+    minutes: str | None = None,
     diarization_segments: list[dict] | None = None,
 ):
     if database_enabled():
-        return save_meeting(job_id, transcript, minutes, diarization_segments)
+        meeting = save_meeting(job_id, transcript, minutes, diarization_segments)
+        if meeting:
+            meeting["word_storage_enabled"] = True
+        return meeting
     with jobs_lock:
         job = jobs.get(job_id)
         if not job or job.get("status") not in {
@@ -208,7 +222,6 @@ def save_stored_meeting(
         edited_at = utc_now()
         job.update(
             transcript=transcript,
-            minutes=minutes,
             diarization_segments=(
                 diarization_segments
                 if diarization_segments is not None
@@ -217,7 +230,78 @@ def save_stored_meeting(
             last_edited_at=edited_at,
             updated_at=edited_at,
         )
+        if minutes is not None:
+            job["minutes"] = minutes
         return _job_to_meeting(job_id, job)
+
+
+def _safe_word_filename(title: str, filename: str | None = None) -> str:
+    source = filename or f"{title}.docx"
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", source).strip(" ._")
+    stem = safe_name[:-5] if safe_name.lower().endswith(".docx") else safe_name
+    return f"{stem[:235] or 'bao-cao-cuoc-hop'}.docx"
+
+
+def _create_word_document(markdown: str, title: str, document_type: str) -> bytes:
+    from document_export import export_markdown_to_docx
+
+    output = io.BytesIO()
+    export_markdown_to_docx(
+        markdown,
+        output,
+        title=title,
+        document_type=document_type,
+    )
+    return output.getvalue()
+
+
+def get_stored_word_document(job_id: str):
+    if database_enabled():
+        return get_word_document(job_id)
+    return None
+
+
+def save_stored_word_document(
+    job_id: str,
+    data: bytes,
+    filename: str,
+    *,
+    mark_edited: bool = True,
+):
+    if database_enabled():
+        writer = update_word_document if mark_edited else store_generated_word_document
+        meeting = writer(job_id, data, filename)
+        if meeting:
+            meeting["word_storage_enabled"] = True
+        return meeting
+    return None
+
+
+def ensure_summary_word_document(job_id: str, meeting: dict):
+    summary = meeting.get("summary", "")
+    if not summary.strip():
+        return None
+    filename = _safe_word_filename(meeting["title"])
+
+    # Without a database, build the DOCX only for the current view/download
+    # request. Never retain the document bytes in the in-memory jobs cache.
+    if not database_enabled():
+        data = _create_word_document(summary, meeting["title"], "summary")
+        return {"data": data, "filename": filename, "updated_at": None}
+
+    stored = get_stored_word_document(job_id)
+    if stored:
+        return stored
+    data = _create_word_document(summary, meeting["title"], "summary")
+    saved = save_stored_word_document(
+        job_id,
+        data,
+        filename,
+        mark_edited=False,
+    )
+    if not saved:
+        return get_stored_word_document(job_id)
+    return {"data": data, "filename": filename, "updated_at": utc_now()}
 
 
 def validate_diarization_segments(value) -> list[dict] | None:
@@ -449,7 +533,21 @@ def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
             use_gemini_api=app.config["USE_GEMINI_API"],
             meeting_title=meeting_title,
         )
-        if database_enabled() and not complete_meeting(job_id, transcript, minutes):
+        word_filename = (
+            _safe_word_filename(meeting_title) if database_enabled() else None
+        )
+        word_document = (
+            _create_word_document(minutes, meeting_title, "summary")
+            if database_enabled()
+            else None
+        )
+        if database_enabled() and not complete_meeting(
+            job_id,
+            transcript,
+            minutes,
+            word_document,
+            word_filename,
+        ):
             raise DatabaseError("Không tìm thấy cuộc họp để lưu bản tóm tắt.")
 
         completed_at = utc_now()
@@ -459,6 +557,8 @@ def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
             message="Hoàn tất!",
             transcript=transcript,
             minutes=minutes,
+            word_filename=word_filename,
+            word_updated_at=completed_at if database_enabled() else None,
             completed_at=completed_at,
         )
     except Exception as error:
@@ -628,11 +728,10 @@ def meeting_detail(result_id):
 @app.route("/api/meetings/<result_id>", methods=["PUT"])
 def update_meeting(result_id):
     payload = request.get_json(silent=True) or {}
-    summary = payload.get("summary")
     transcript = payload.get("transcript")
-    if not isinstance(summary, str) or not isinstance(transcript, str):
+    if not isinstance(transcript, str):
         return jsonify({"error": "Nội dung không hợp lệ"}), 400
-    if len(summary) > 20_000_000 or len(transcript) > 20_000_000:
+    if len(transcript) > 20_000_000:
         return jsonify({"error": "Nội dung quá lớn"}), 413
     try:
         diarization_segments = validate_diarization_segments(
@@ -644,7 +743,7 @@ def update_meeting(result_id):
     meeting = save_stored_meeting(
         result_id,
         transcript,
-        summary,
+        None,
         diarization_segments,
     )
     if not meeting:
@@ -656,12 +755,9 @@ def update_meeting(result_id):
 def summarize_saved_transcript(result_id):
     payload = request.get_json(silent=True) or {}
     transcript = payload.get("transcript")
-    summary = payload.get("summary", "")
     if not isinstance(transcript, str) or not transcript.strip():
         return jsonify({"error": "Transcript đang trống."}), 400
-    if not isinstance(summary, str):
-        return jsonify({"error": "Nội dung tóm tắt không hợp lệ."}), 400
-    if len(transcript) > 20_000_000 or len(summary) > 20_000_000:
+    if len(transcript) > 20_000_000:
         return jsonify({"error": "Nội dung quá lớn"}), 413
     try:
         diarization_segments = validate_diarization_segments(
@@ -685,7 +781,7 @@ def summarize_saved_transcript(result_id):
     meeting = save_stored_meeting(
         result_id,
         transcript,
-        summary,
+        None,
         diarization_segments,
     )
     if not meeting:
@@ -704,7 +800,7 @@ def summarize_saved_transcript(result_id):
             "file_count": meeting.get("file_count", 1),
             "total_audio_bytes": meeting.get("total_audio_bytes", 0),
             "transcript": transcript,
-            "minutes": summary,
+            "minutes": meeting.get("summary", ""),
             "diarization_segments": (
                 diarization_segments
                 if diarization_segments is not None
@@ -738,18 +834,25 @@ def export_meeting_word(result_id):
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
 
     try:
-        # Import lazily so transcription still starts with a clear error when
-        # dependencies have not yet been installed from requirements.txt.
-        from document_export import export_markdown_to_docx
-
-        output = io.BytesIO()
-        export_markdown_to_docx(
-            meeting[document_type],
-            output,
-            title=meeting["title"],
-            document_type=document_type,
-        )
-        output.seek(0)
+        if document_type == "summary":
+            stored = ensure_summary_word_document(result_id, meeting)
+            if not stored:
+                return jsonify({"error": "Cuộc họp chưa có báo cáo Word."}), 409
+            data = stored["data"]
+            download_name = _safe_word_filename(
+                meeting["title"],
+                stored.get("filename"),
+            )
+        else:
+            data = _create_word_document(
+                meeting["transcript"],
+                meeting["title"],
+                "transcript",
+            )
+            download_name = _safe_word_filename(
+                meeting["title"],
+                f"{meeting['title']}.transcript.docx",
+            )
     except ImportError as error:
         return jsonify({
             "error": "Thiếu python-docx. Hãy chạy: pip install -r requirements.txt"
@@ -757,18 +860,86 @@ def export_meeting_word(result_id):
     except Exception as error:
         return jsonify({"error": f"Không thể tạo file Word: {error}"}), 500
 
-    safe_title = re.sub(
-        r'[<>:"/\\|?*\x00-\x1f]+', "_", meeting["title"]
-    ).strip(" ._")[:80] or "cuoc-hop"
     return send_file(
-        output,
+        io.BytesIO(data),
         as_attachment=True,
-        download_name=f"{safe_title}.{document_type}.docx",
+        download_name=download_name,
         mimetype=(
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ),
         max_age=0,
     )
+
+
+@app.route("/api/meetings/<result_id>/word/view")
+def view_meeting_word(result_id):
+    meeting = get_stored_meeting(result_id)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+    try:
+        stored = ensure_summary_word_document(result_id, meeting)
+        if not stored:
+            return jsonify({"error": "Cuộc họp chưa có báo cáo Word."}), 409
+        from document_viewer import render_docx_html
+
+        viewer_html = render_docx_html(stored["data"], title=meeting["title"])
+    except ImportError:
+        return jsonify({
+            "error": "Thiếu python-docx. Hãy chạy: pip install -r requirements.txt"
+        }), 500
+    except Exception as error:
+        return jsonify({"error": f"Không thể hiển thị file Word: {error}"}), 500
+
+    response = Response(viewer_html, mimetype="text/html")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/api/meetings/<result_id>/word", methods=["POST"])
+def replace_meeting_word(result_id):
+    if not database_enabled():
+        return jsonify({
+            "error": (
+                "Chế độ --no-database không lưu file Word. "
+                "Hãy bật SQL Server để cập nhật DOCX."
+            )
+        }), 409
+
+    meeting = get_stored_meeting(result_id)
+    if not meeting:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+    if meeting.get("status") != "completed":
+        return jsonify({"error": "Chỉ có thể cập nhật Word sau khi tóm tắt hoàn tất."}), 409
+
+    uploaded = request.files.get("word_file")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "Hãy chọn một file DOCX."}), 400
+    if not uploaded.filename.lower().endswith(".docx"):
+        return jsonify({"error": "Chỉ hỗ trợ file có đuôi .docx."}), 400
+    data = uploaded.stream.read(MAX_WORD_DOCUMENT_BYTES + 1)
+    if len(data) > MAX_WORD_DOCUMENT_BYTES:
+        return jsonify({"error": "File Word vượt quá giới hạn 25 MB."}), 413
+
+    try:
+        from document_viewer import InvalidWordDocument, validate_docx
+
+        validate_docx(data)
+    except ImportError:
+        return jsonify({
+            "error": "Thiếu python-docx. Hãy chạy: pip install -r requirements.txt"
+        }), 500
+    except InvalidWordDocument as error:
+        return jsonify({"error": str(error)}), 400
+
+    filename = _safe_word_filename(meeting["title"], uploaded.filename)
+    saved = save_stored_word_document(result_id, data, filename)
+    if not saved:
+        return jsonify({"error": "Không thể cập nhật file Word."}), 409
+    return jsonify(saved)
 
 
 def parse_args(argv=None):
@@ -802,7 +973,8 @@ if __name__ == "__main__":
     else:
         print(
             "[Database] Disabled: history and edits are temporary and will be "
-            "lost when this process stops."
+            "lost when this process stops. Word files are generated on demand "
+            "and are not stored."
         )
     if args.api:
         print(f"[API] Gemini enabled for summaries: {GEMINI_MODEL}")

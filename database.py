@@ -77,9 +77,17 @@ def _row_to_meeting(cursor, row):
     }
     if "id" in values:
         values["id"] = str(values["id"]).lower()
-    for key in ("created_at", "completed_at", "last_edited_at", "updated_at"):
+    for key in (
+        "created_at",
+        "completed_at",
+        "last_edited_at",
+        "word_updated_at",
+        "updated_at",
+    ):
         if key in values:
             values[key] = _iso_utc(values.get(key))
+    if "has_word_document" in values:
+        values["has_word_document"] = bool(values["has_word_document"])
     raw_segments = values.pop("diarization_segments_json", "[]") or "[]"
     try:
         values["diarization_segments"] = json.loads(raw_segments)
@@ -213,20 +221,41 @@ def complete_transcription(job_id, transcript, diarization_segments=None):
         connection.close()
 
 
-def complete_meeting(job_id, transcript, minutes):
+def complete_meeting(
+    job_id,
+    transcript,
+    minutes,
+    word_document=None,
+    word_filename=None,
+):
     connection = get_connection()
     cursor = connection.cursor()
     try:
+        if word_document is not None:
+            cursor.setinputsizes([
+                None,
+                None,
+                (pyodbc.SQL_LONGVARBINARY, len(word_document), 0),
+                None,
+                None,
+                None,
+            ])
         cursor.execute(
             """
             UPDATE dbo.MeetingHistory
-            SET Transcript = ?, Minutes = ?, Status = 'completed',
+            SET Transcript = ?, Minutes = ?, WordDocument = ?, WordFileName = ?,
+                WordUpdatedAt = CASE WHEN ? = 0 THEN WordUpdatedAt
+                                     ELSE SYSUTCDATETIME() END,
+                Status = 'completed',
                 StatusMessage = N'Hoàn tất!',
                 CompletedAt = SYSUTCDATETIME(), UpdatedAt = SYSUTCDATETIME()
             WHERE Id = ?
             """,
             transcript,
             minutes,
+            word_document,
+            word_filename,
+            int(word_document is not None),
             str(job_id),
         )
         connection.commit()
@@ -252,6 +281,10 @@ def get_meeting(job_id):
                 Engine AS engine,
                 Transcript AS transcript,
                 Minutes AS summary,
+                CAST(CASE WHEN WordDocument IS NULL THEN 0 ELSE 1 END AS bit)
+                    AS has_word_document,
+                WordFileName AS word_filename,
+                WordUpdatedAt AS word_updated_at,
                 DiarizationSegments AS diarization_segments_json,
                 Status AS status,
                 StatusMessage AS status_message,
@@ -303,7 +336,7 @@ def get_meetings():
         connection.close()
 
 
-def update_meeting(job_id, transcript, minutes, diarization_segments=None):
+def update_meeting(job_id, transcript, minutes=None, diarization_segments=None):
     segments_json = (
         json.dumps(
             diarization_segments,
@@ -319,7 +352,7 @@ def update_meeting(job_id, transcript, minutes, diarization_segments=None):
         cursor.execute(
             """
             UPDATE dbo.MeetingHistory
-            SET Transcript = ?, Minutes = ?,
+            SET Transcript = ?, Minutes = COALESCE(?, Minutes),
                 DiarizationSegments = COALESCE(?, DiarizationSegments),
                 LastEditedAt = SYSUTCDATETIME(),
                 UpdatedAt = SYSUTCDATETIME()
@@ -330,6 +363,102 @@ def update_meeting(job_id, transcript, minutes, diarization_segments=None):
             transcript,
             minutes,
             segments_json,
+            str(job_id),
+        )
+        connection.commit()
+        found = cursor.rowcount > 0
+    except pyodbc.Error as error:
+        connection.rollback()
+        raise _friendly_error(error) from error
+    finally:
+        cursor.close()
+        connection.close()
+    return get_meeting(job_id) if found else None
+
+
+def get_word_document(job_id):
+    """Return the stored summary DOCX without including it in meeting JSON."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT WordDocument, WordFileName, WordUpdatedAt
+            FROM dbo.MeetingHistory
+            WHERE Id = ?
+            """,
+            str(job_id),
+        )
+        row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return {
+            "data": bytes(row[0]),
+            "filename": row[1] or "bao-cao-cuoc-hop.docx",
+            "updated_at": _iso_utc(row[2]),
+        }
+    except pyodbc.Error as error:
+        raise _friendly_error(error) from error
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def update_word_document(job_id, data: bytes, filename: str):
+    """Replace the report DOCX and update edit metadata atomically."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        # Without an explicit LONGVARBINARY binding, ODBC Driver 18 may stream
+        # a multi-megabyte DOCX in tiny chunks and take over a minute.
+        cursor.setinputsizes([
+            (pyodbc.SQL_LONGVARBINARY, len(data), 0),
+            None,
+            None,
+        ])
+        cursor.execute(
+            """
+            UPDATE dbo.MeetingHistory
+            SET WordDocument = ?, WordFileName = ?,
+                WordUpdatedAt = SYSUTCDATETIME(),
+                LastEditedAt = SYSUTCDATETIME(),
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE Id = ? AND Status = 'completed'
+            """,
+            data,
+            filename,
+            str(job_id),
+        )
+        connection.commit()
+        found = cursor.rowcount > 0
+    except pyodbc.Error as error:
+        connection.rollback()
+        raise _friendly_error(error) from error
+    finally:
+        cursor.close()
+        connection.close()
+    return get_meeting(job_id) if found else None
+
+
+def store_generated_word_document(job_id, data: bytes, filename: str):
+    """Backfill a generated DOCX without marking the meeting as user-edited."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.setinputsizes([
+            (pyodbc.SQL_LONGVARBINARY, len(data), 0),
+            None,
+            None,
+        ])
+        cursor.execute(
+            """
+            UPDATE dbo.MeetingHistory
+            SET WordDocument = ?, WordFileName = ?,
+                WordUpdatedAt = SYSUTCDATETIME()
+            WHERE Id = ? AND Status = 'completed' AND WordDocument IS NULL
+            """,
+            data,
+            filename,
             str(job_id),
         )
         connection.commit()

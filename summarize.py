@@ -12,7 +12,7 @@ import requests
 OLLAMA_BASE_URL = "http://localhost:11434"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_MODEL = "gemini-3.6-flash"
-DEFAULT_MODEL = "gemma4:e2b"  # đổi thành model bạn đã "ollama pull" sẵn
+DEFAULT_MODEL = "qwen3.5:9b-q8_0"  # đổi thành model bạn đã "ollama pull" sẵn
 
 # Avoid Ollama's small runner default silently truncating long transcripts and
 # the meeting-minutes instructions. Override these through the environment when

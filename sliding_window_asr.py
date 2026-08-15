@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 
 DEFAULT_WINDOW_SECONDS = float(
-    os.environ.get("DIARIZATION_ASR_WINDOW_SECONDS", "45")
+    os.environ.get("DIARIZATION_ASR_WINDOW_SECONDS", "30")
 )
 DEFAULT_OVERLAP_SECONDS = float(
-    os.environ.get("DIARIZATION_ASR_OVERLAP_SECONDS", "15")
+    os.environ.get("DIARIZATION_ASR_OVERLAP_SECONDS", "5")
 )
 
 

@@ -516,7 +516,8 @@
   }
 
   function updateDiarizationControls() {
-    const supported = ui.engine.value === "whisper" || ui.engine.value === "nghiasr";
+    const selectedEngine = ui.engine.selectedOptions[0];
+    const supported = selectedEngine?.dataset.diarization === "true";
     if (!supported) ui.diarization.checked = false;
     ui.diarization.disabled = !supported;
     const enabled = supported && ui.diarization.checked;
@@ -524,7 +525,7 @@
     ui.speakerCount.disabled = !enabled;
     ui.minSpeakerTurn.disabled = !enabled;
     ui.diarizationNote.textContent = supported
-      ? "Dùng pyannote trước khi chạy Whisper hoặc NghiASR."
+      ? "Dùng pyannote trước khi chạy model ASR đã chọn."
       : "Gemma chưa hỗ trợ tách người nói.";
   }
 

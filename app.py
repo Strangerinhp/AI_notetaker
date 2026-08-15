@@ -12,6 +12,7 @@ Sau đó mở trình duyệt: http://localhost:5001
 """
 
 import argparse
+import importlib
 import io
 import math
 import os
@@ -38,11 +39,6 @@ from database import (
 )
 from summarize import GEMINI_MODEL, summarize_transcript
 from sliding_window_asr import build_sliding_windows
-from transcribe_whisper import (
-    transcribe_diarized_audio as transcribe_whisper_diarized,
-    transcribe_segments as transcribe_whisper,
-)
-from transcribe_gemma import transcribe_segments as transcribe_gemma
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -51,16 +47,51 @@ TEMP_FOLDER = os.path.join(BASE_DIR, "temp_segments")
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "ogg", "flac", "webm"}
 SEGMENT_MINUTES = 2
 NGHIASR_SEGMENT_MINUTES = 0.5
+ZIPFORMER_SEGMENT_MINUTES = 0.5
 DEFAULT_MIN_SPEAKER_TURN_SECONDS = 2.0
 WHISPER_LANGUAGE = "vi"  # None = tự nhận diện ngôn ngữ; đặt "vi" nếu luôn là tiếng Việt
 OLLAMA_MODEL = "qwen3.5:9b-q8_0"  # đổi theo model bạn đã pull trong Ollama
 
-TRANSCRIBE_ENGINE_LABELS = {
-    "whisper": "Whisper",
-    "gemma": "Gemma 4 E2B",
-    "nghiasr": "NghiASR",
+TRANSCRIBE_ENGINES = {
+    "whisper": {
+        "label": "Whisper",
+        "module": "transcribe_whisper",
+        "segment_minutes": SEGMENT_MINUTES,
+        "diarization": True,
+    },
+    "gemma": {
+        "label": "Gemma 4 E2B",
+        "module": "transcribe_gemma",
+        "segment_minutes": SEGMENT_MINUTES,
+        "diarization": False,
+    },
+    "nghiasr": {
+        "label": "NghiASR",
+        "module": "transcribe_nghiasr",
+        "segment_minutes": NGHIASR_SEGMENT_MINUTES,
+        "diarization": True,
+    },
+    "zipformer": {
+        "label": "Zipformer 30M",
+        "module": "transcribe_zipformer",
+        "segment_minutes": ZIPFORMER_SEGMENT_MINUTES,
+        "diarization": True,
+    },
+    "phoasr": {
+        "label": "PhoASR Whisper Small",
+        "module": "transcribe_phoasr",
+        "segment_minutes": SEGMENT_MINUTES,
+        "diarization": True,
+    },
 }
-DIARIZATION_ENGINES = {"whisper", "nghiasr"}
+TRANSCRIBE_ENGINE_LABELS = {
+    engine: config["label"] for engine, config in TRANSCRIBE_ENGINES.items()
+}
+DIARIZATION_ENGINES = {
+    engine
+    for engine, config in TRANSCRIBE_ENGINES.items()
+    if config["diarization"]
+}
 
 for folder in (UPLOAD_FOLDER, TEMP_FOLDER):
     os.makedirs(folder, exist_ok=True)
@@ -247,7 +278,7 @@ def parse_diarization_options(form, transcribe_engine: str):
     if not enabled:
         return False, None, DEFAULT_MIN_SPEAKER_TURN_SECONDS
     if transcribe_engine not in DIARIZATION_ENGINES:
-        raise ValueError("Tách người nói chỉ hỗ trợ Whisper và NghiASR.")
+        raise ValueError("Model transcript đã chọn chưa hỗ trợ tách người nói.")
 
     speaker_count_text = str(form.get("speaker_count", "")).strip()
     speaker_count = None
@@ -315,15 +346,12 @@ def process_audio_files(
                 else "Đang chia nhỏ file audio..."
             )
             update_job_status(job_id, "splitting", splitting_message)
-            segment_minutes = (
-                NGHIASR_SEGMENT_MINUTES
-                if transcribe_engine == "nghiasr"
-                else SEGMENT_MINUTES
-            )
             segment_paths = split_audio_files(
                 file_paths,
                 segment_dir,
-                segment_minutes=segment_minutes,
+                segment_minutes=TRANSCRIBE_ENGINES[transcribe_engine][
+                    "segment_minutes"
+                ],
             )
             total = len(segment_paths)
 
@@ -346,45 +374,22 @@ def process_audio_files(
                 message=f"Đang chuyển giọng nói thành văn bản bằng {engine_label} ({current}/{total_segments})...",
             )
 
-        if transcribe_engine == "gemma":
-            transcript = transcribe_gemma(
-                segment_paths, language=WHISPER_LANGUAGE, progress_callback=on_progress
+        transcriber = importlib.import_module(
+            TRANSCRIBE_ENGINES[transcribe_engine]["module"]
+        )
+        if diarization_result:
+            transcript = transcriber.transcribe_diarized_audio(
+                diarization_result.meeting_audio_path,
+                diarization_result.turns,
+                language=WHISPER_LANGUAGE,
+                progress_callback=on_progress,
             )
-        elif transcribe_engine == "nghiasr":
-            # Import lazily so other engines do not load/download the NghiASR model.
-            if diarization_result:
-                from transcribe_nghiasr import (
-                    transcribe_diarized_audio as transcribe_nghiasr_diarized,
-                )
-
-                transcript = transcribe_nghiasr_diarized(
-                    diarization_result.meeting_audio_path,
-                    diarization_result.turns,
-                    language=WHISPER_LANGUAGE,
-                    progress_callback=on_progress,
-                )
-            else:
-                from transcribe_nghiasr import transcribe_segments as transcribe_nghiasr
-
-                transcript = transcribe_nghiasr(
-                    segment_paths,
-                    language=WHISPER_LANGUAGE,
-                    progress_callback=on_progress,
-                )
         else:
-            if diarization_result:
-                transcript = transcribe_whisper_diarized(
-                    diarization_result.meeting_audio_path,
-                    diarization_result.turns,
-                    language=WHISPER_LANGUAGE,
-                    progress_callback=on_progress,
-                )
-            else:
-                transcript = transcribe_whisper(
-                    segment_paths,
-                    language=WHISPER_LANGUAGE,
-                    progress_callback=on_progress,
-                )
+            transcript = transcriber.transcribe_segments(
+                segment_paths,
+                language=WHISPER_LANGUAGE,
+                progress_callback=on_progress,
+            )
 
         # Một số engine (đặc biệt NghiASR) có thể trả về toàn bộ chữ in hoa.
         # Chuẩn hóa một lần tại đây để transcript hiển thị và lưu dưới dạng chữ thường.

@@ -18,7 +18,8 @@ tiến trình Flask dừng. Có thể kết hợp với Gemini:
 python app.py --no-database --api
 ```
 
-Nếu không có `--api`, bước tóm tắt dùng model Ollama `gemma4:e2b`.
+Nếu không có `--api`, bước tóm tắt dùng model Ollama được cấu hình trong
+`app.py`.
 
 ## Quy trình duyệt transcript trước khi tóm tắt
 
@@ -175,10 +176,48 @@ Whisper `large-v3`, pyannote và Ollama cùng giữ model trên GPU có thể v�
 Nếu cần Whisper hoặc diarization, dùng `--api` cho phần tóm tắt hoặc ép
 `DIARIZATION_DEVICE=cpu` để giảm tranh chấp VRAM.
 
-## Tách người nói (Whisper và NghiASR)
+## Zipformer 30M
 
-Giao diện có tùy chọn **Tách người nói** cho Whisper và NghiASR. Khi bật, app
-thực hiện pipeline sau:
+Dropdown transcript có thêm `hynt/Zipformer-30M-RNNT-6000h`. Model dùng
+`sherpa-onnx` giống NghiASR nên không cần cài thêm dependency. Lần sử dụng đầu
+tiên, app tải bộ ONNX `int8` và token table từ Hugging Face; các lần sau dùng
+cache trên máy. Có thể đổi cấu hình mà không sửa code:
+
+```powershell
+$env:ZIPFORMER_QUANTIZATION="int8" # hoặc fp32
+$env:ZIPFORMER_NUM_THREADS="4"
+python app.py
+```
+
+Model Zipformer này có giấy phép **CC BY-NC-ND 4.0**, vì vậy chỉ nên dùng cho
+nghiên cứu/demo phi thương mại nếu chưa có giấy phép khác từ tác giả.
+
+## PhoASR Whisper Small
+
+Dropdown transcript có thêm `Qualcomm-AI-Research/PhoASR-whisper-small`, model
+Whisper Small được fine-tune cho tiếng Việt. Model chạy qua Transformers, có
+word timestamp và dùng chung sliding window 30 giây/overlap 5 giây cùng pipeline
+gán speaker hiện có. Lần chạy đầu, Hugging Face tải gần 1 GB trọng số; các lần
+sau dùng cache trên máy.
+
+Thiết bị và kiểu dữ liệu được chọn tự động: CUDA dùng `float16`, CPU/MPS dùng
+`float32`. Có thể cấu hình mà không sửa code:
+
+```powershell
+$env:PHOASR_DEVICE="cuda"       # auto, cuda, cpu hoặc mps
+$env:PHOASR_DTYPE="float16"    # auto, float16, float32 hoặc bfloat16
+python app.py
+```
+
+Checkpoint được phát hành theo BSD-3-Clause-Clear kèm Qualcomm Responsible AI
+License và model card nêu mục đích nghiên cứu/giáo dục. Cần rà soát điều khoản
+trước khi đưa vào sản phẩm thương mại, đồng thời ghi nguồn model nếu phân phối
+phần mềm hoặc công bố kết quả.
+
+## Tách người nói (Whisper, NghiASR, Zipformer và PhoASR)
+
+Giao diện có tùy chọn **Tách người nói** cho Whisper, NghiASR, Zipformer và
+PhoASR. Khi bật, app thực hiện pipeline sau:
 
 1. Ghép các file theo đúng thứ tự tải lên và đổi toàn bộ cuộc họp thành WAV
    mono 16 kHz bằng FFmpeg.
@@ -186,7 +225,7 @@ thực hiện pipeline sau:
    phân cụm người nói.
 3. Bỏ các lượt speaker ngắn hơn ngưỡng trên giao diện (mặc định `2.0` giây)
    khỏi bước căn speaker; audio gốc không bị cắt bỏ.
-4. Chạy Whisper hoặc NghiASR trên audio liên tục bằng sliding window 30 giây,
+4. Chạy model ASR đã chọn trên audio liên tục bằng sliding window 30 giây,
    overlap 5 giây. Mỗi cửa sổ chỉ giữ hypothesis thuộc vùng trung tâm của nó để
    không lặp chữ trong phần overlap.
 5. Dùng word/token timestamps để gán kết quả ASR về lượt nói của pyannote và tạo

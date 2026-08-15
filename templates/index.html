@@ -100,9 +100,11 @@
           <label class="select-field">
             <span>Model transcript</span>
             <select id="engine-select">
-              <option value="whisper">Whisper — chính xác cao</option>
-              <option value="gemma">Gemma 4 E2B — nhẹ, qua Ollama</option>
-              <option value="nghiasr">NghiASR — tối ưu Việt / Anh</option>
+              <option value="whisper" data-diarization="true">Whisper — chính xác cao</option>
+              <option value="gemma" data-diarization="false">Gemma 4 E2B — nhẹ, qua Ollama</option>
+              <option value="nghiasr" data-diarization="true">NghiASR — tối ưu Việt / Anh</option>
+              <option value="zipformer" data-diarization="true">Zipformer 30M — tiếng Việt, CPU nhanh (phi thương mại)</option>
+              <option value="phoasr" data-diarization="true">PhoASR Whisper Small — tiếng Việt, dấu câu tốt</option>
             </select>
           </label>
 
@@ -110,7 +112,7 @@
             <label class="toggle-field">
               <span>
                 <strong id="diarization-title">Tách người nói</strong>
-                <small id="diarization-note">Dùng pyannote trước khi chạy Whisper hoặc NghiASR.</small>
+                <small id="diarization-note">Dùng pyannote trước khi chạy model ASR hỗ trợ.</small>
               </span>
               <input id="diarization-enabled" type="checkbox" role="switch">
             </label>

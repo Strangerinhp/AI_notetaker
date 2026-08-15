@@ -12,14 +12,14 @@ import requests
 OLLAMA_BASE_URL = "http://localhost:11434"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_MODEL = "gemini-3.6-flash"
-DEFAULT_MODEL = "qwen3.5:9b-q8_0"  # đổi thành model bạn đã "ollama pull" sẵn
+DEFAULT_MODEL = "qwen3.5:9b"  # đổi thành model bạn đã "ollama pull" sẵn
 
 # Avoid Ollama's small runner default silently truncating long transcripts and
 # the meeting-minutes instructions. Override these through the environment when
 # an especially long meeting needs a larger window.
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "40000"))
 OLLAMA_NUM_PREDICT = int(os.environ.get("OLLAMA_NUM_PREDICT", "9000"))
-OLLAMA_TEMPERATURE = float(os.environ.get("OLLAMA_TEMPERATURE", "1.0"))
+OLLAMA_TEMPERATURE = float(os.environ.get("OLLAMA_TEMPERATURE", "0.8"))
 
 MEETING_MINUTES_PROMPT = """\
 Bạn là chuyên viên văn phòng chịu trách nhiệm soạn thông báo kết luận cuộc họp \
@@ -100,6 +100,7 @@ def query_ollama(prompt: str, model: str = DEFAULT_MODEL, timeout: int = 600) ->
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "think": False,
         "options": {
             "num_ctx": OLLAMA_NUM_CTX,
             "num_predict": OLLAMA_NUM_PREDICT,

@@ -54,7 +54,7 @@ NGHIASR_SEGMENT_MINUTES = 0.5
 ZIPFORMER_SEGMENT_MINUTES = 0.5
 DEFAULT_MIN_SPEAKER_TURN_SECONDS = 2.0
 WHISPER_LANGUAGE = "vi"  # None = tự nhận diện ngôn ngữ; đặt "vi" nếu luôn là tiếng Việt
-OLLAMA_MODEL = "qwen3.5:9b-q8_0"  # đổi theo model bạn đã pull trong Ollama
+OLLAMA_MODEL = "qwen3.5:9b"  # đổi theo model bạn đã pull trong Ollama
 
 TRANSCRIBE_ENGINES = {
     "whisper": {

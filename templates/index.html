@@ -157,18 +157,23 @@
           </div>
         </div>
 
-        <nav class="result-map" aria-label="Nội dung cuộc họp">
-          <a href="#transcript-workspace">
+        <nav class="result-map" aria-label="Nội dung cuộc họp" role="tablist">
+          <button class="result-map-item active" id="transcript-screen-button" type="button"
+                  data-workspace-target="transcript" role="tab" aria-selected="true"
+                  aria-controls="transcript-workspace">
             <span>01</span>
             <div><strong>Transcript</strong><small>Kiểm tra và chỉnh sửa nội dung đầu vào</small></div>
-          </a>
-          <a href="#word-workspace">
+          </button>
+          <button class="result-map-item" id="word-screen-button" type="button"
+                  data-workspace-target="word" role="tab" aria-selected="false"
+                  aria-controls="word-workspace">
             <span>02</span>
             <div><strong>Báo cáo Word</strong><small>Xem, tải xuống hoặc cập nhật file DOCX</small></div>
-          </a>
+          </button>
         </nav>
 
-        <section class="workspace-section" id="transcript-workspace">
+        <section class="workspace-section workspace-screen" id="transcript-workspace"
+                 role="tabpanel" aria-labelledby="transcript-screen-button">
           <header class="workspace-heading">
             <div>
               <small>BƯỚC 1 · NỘI DUNG NGUỒN</small>
@@ -240,18 +245,13 @@
           </div>
         </section>
 
-        <section class="workspace-section word-workspace" id="word-workspace">
+        <section class="workspace-section workspace-screen word-workspace hidden" id="word-workspace"
+                 role="tabpanel" aria-labelledby="word-screen-button">
           <header class="workspace-heading">
             <div>
               <small>BƯỚC 2 · TÀI LIỆU CHÍNH THỨC</small>
               <h2>Báo cáo Word</h2>
               <p>Bản xem chỉ đọc của báo cáo DOCX hiện tại.</p>
-            </div>
-            <div class="workspace-actions">
-              <button class="secondary-button" id="word-download-button" type="button">
-                <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
-                Tải báo cáo .docx
-              </button>
             </div>
           </header>
 
@@ -261,6 +261,10 @@
               <div><strong id="word-file-name">Chưa có báo cáo Word</strong><small id="word-file-meta">Tóm tắt transcript để tạo file đầu tiên.</small></div>
             </div>
             <div class="word-update-actions" id="word-update-actions">
+              <button class="secondary-button" id="word-download-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M8 11l2 6 2-4 2 4 2-6"/></svg>
+                Tải báo cáo .docx
+              </button>
               <label class="secondary-button word-upload-button" for="word-upload-input">
                 <svg viewBox="0 0 24 24"><path d="M12 16V4M7.5 8.5 12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
                 Chọn file Word mới

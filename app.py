@@ -901,14 +901,6 @@ def view_meeting_word(result_id):
 
 @app.route("/api/meetings/<result_id>/word", methods=["POST"])
 def replace_meeting_word(result_id):
-    if not database_enabled():
-        return jsonify({
-            "error": (
-                "Chế độ --no-database không lưu file Word. "
-                "Hãy bật SQL Server để cập nhật DOCX."
-            )
-        }), 409
-
     meeting = get_stored_meeting(result_id)
     if not meeting:
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
@@ -925,17 +917,35 @@ def replace_meeting_word(result_id):
         return jsonify({"error": "File Word vượt quá giới hạn 25 MB."}), 413
 
     try:
-        from document_viewer import InvalidWordDocument, validate_docx
+        from document_viewer import (
+            InvalidWordDocument,
+            render_docx_html,
+            validate_docx,
+        )
 
         validate_docx(data)
+        viewer_html = (
+            render_docx_html(data, title=meeting["title"])
+            if not database_enabled()
+            else None
+        )
     except ImportError:
         return jsonify({
             "error": "Thiếu python-docx. Hãy chạy: pip install -r requirements.txt"
         }), 500
     except InvalidWordDocument as error:
         return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": f"Không thể hiển thị file Word: {error}"}), 500
 
     filename = _safe_word_filename(meeting["title"], uploaded.filename)
+    if not database_enabled():
+        return jsonify({
+            "temporary": True,
+            "filename": filename,
+            "viewer_html": viewer_html,
+        })
+
     saved = save_stored_word_document(result_id, data, filename)
     if not saved:
         return jsonify({"error": "Không thể cập nhật file Word."}), 409

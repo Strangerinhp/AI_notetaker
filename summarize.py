@@ -19,7 +19,7 @@ DEFAULT_MODEL = "qwen3.5:9b-q8_0"  # đổi thành model bạn đã "ollama pull
 # an especially long meeting needs a larger window.
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "40000"))
 OLLAMA_NUM_PREDICT = int(os.environ.get("OLLAMA_NUM_PREDICT", "9000"))
-OLLAMA_TEMPERATURE = float(os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
+OLLAMA_TEMPERATURE = float(os.environ.get("OLLAMA_TEMPERATURE", "1.0"))
 
 MEETING_MINUTES_PROMPT = """\
 Bạn là chuyên viên văn phòng chịu trách nhiệm soạn thông báo kết luận cuộc họp \

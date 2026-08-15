@@ -13,8 +13,9 @@ python app.py --no-database
 Chế độ này không kiểm tra, đọc hoặc ghi SQL Server. Sidebar và transcript editor
 chỉ dùng dữ liệu trong RAM và mất khi tiến trình Flask dừng. Word viewer và tải
 DOCX vẫn hoạt động bằng cách tạo tài liệu theo từng yêu cầu; byte của file Word
-không được giữ trong RAM. Chức năng tải lên và lưu lại DOCX đã chỉnh sửa chỉ khả
-dụng khi app kết nối SQL Server. Có thể kết hợp với Gemini:
+không được giữ trong RAM. Giao diện upload Word vẫn giống chế độ có database,
+nhưng file được chọn chỉ cập nhật viewer trong tab trình duyệt hiện tại và không
+được lưu lâu dài. Có thể kết hợp với Gemini:
 
 ```powershell
 python app.py --no-database --api
@@ -28,17 +29,18 @@ Nếu không có `--api`, bước tóm tắt dùng model Ollama được cấu h
 MeetNote không còn gọi LLM ngay sau khi phiên âm. Luồng xử lý hiện tại là:
 
 1. Tạo transcript và, nếu được bật, chạy speaker diarization.
-2. Mở transcript trong Markdown editor để người dùng kiểm tra.
+2. Mở transcript trong màn hình Markdown editor để người dùng kiểm tra.
 3. Hiển thị timeline các lượt nói và cho phép đổi tên một speaker trên toàn bộ
    transcript, ví dụ `người nói 1` thành `Giám đốc An`.
 4. Chỉ khi người dùng bấm **Tóm tắt transcript**, nội dung đã chỉnh sửa mới được
    gửi tới Ollama hoặc Gemini.
-5. Bản tóm tắt được biên dịch thành DOCX và hiển thị trong Word viewer chỉ đọc,
-   không còn xuất hiện trong Markdown editor.
+5. Bản tóm tắt được biên dịch thành DOCX và hiển thị ở màn hình Word viewer riêng,
+   không nằm bên dưới transcript và không còn xuất hiện trong Markdown editor.
 6. Khi dùng SQL Server, người dùng có thể tải DOCX, chỉnh sửa bằng Microsoft Word
    rồi chọn lại file và bấm **Lưu file Word**. File mới thay thế blob trong database
-   và viewer tải lại ngay lập tức. Ở chế độ `--no-database`, app chỉ cho xem hoặc
-   tải bản DOCX được tạo theo yêu cầu và không lưu file Word.
+   và viewer tải lại ngay lập tức. Ở chế độ `--no-database`, cùng thao tác upload
+   chỉ thay nội dung viewer của phiên trình duyệt hiện tại; file Word không được
+   ghi vào RAM phía server hay database.
 
 ## Demo một ngày trên Google Colab với Ollama
 

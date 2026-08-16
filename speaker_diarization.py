@@ -1,4 +1,4 @@
-"""Speaker diarization helpers shared by Whisper and NghiASR.
+"""Speaker diarization helpers shared by the supported ASR engines.
 
 The pipeline follows the reference notebook's order:
 

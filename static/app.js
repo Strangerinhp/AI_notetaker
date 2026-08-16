@@ -742,7 +742,7 @@
     ui.minSpeakerTurn.disabled = !enabled;
     ui.diarizationNote.textContent = supported
       ? "Dùng pyannote trước khi chạy model ASR đã chọn."
-      : "Gemma chưa hỗ trợ tách người nói.";
+      : "Model transcript đã chọn chưa hỗ trợ tách người nói.";
   }
 
   function setProgress(status, message) {

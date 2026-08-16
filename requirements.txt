@@ -2,12 +2,10 @@ flask
 huggingface-hub>=0.28.1,<1
 numpy
 openai-whisper
-pydub
 python-docx>=1.2,<2
 requests
 sherpa-onnx
 soundfile
-transformers==4.48.0
 werkzeug
 imageio-ffmpeg
 pyodbc>=5,<6

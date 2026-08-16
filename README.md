@@ -88,7 +88,7 @@ os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
 os.environ["DIARIZATION_DEVICE"] = "cuda"
 ```
 
-### 2. Cài, khởi động Ollama và tải Gemma 4 E2B
+### 2. Cài, khởi động Ollama và tải Qwen 3.5 9B
 
 ```python
 !curl -fsSL https://ollama.com/install.sh | sh
@@ -108,18 +108,17 @@ time.sleep(3)
 ```
 
 ```python
-!ollama pull gemma4:e2b
+!ollama pull qwen3.5:9b
 !ollama list
 ```
 
-`gemma4:e2b` được app dùng cho bước tóm tắt. Nếu chọn **Gemma 4 E2B** trên giao
-diện, model này cũng xử lý transcript audio. Không thêm `--api` nếu muốn dùng
-Gemma để tóm tắt.
+`qwen3.5:9b` được app dùng cho bước tóm tắt qua Ollama. Không thêm `--api` nếu
+muốn dùng Qwen để tóm tắt.
 
 ### 3. Chạy `app.py` để khởi động Flask
 
 Đây chính là bước chạy `app.py`. Chạy cell này **một lần**, sau khi
-`ollama pull gemma4:e2b` hoàn tất và trước khi chạy Cloudflare Tunnel:
+`ollama pull qwen3.5:9b` hoàn tất và trước khi chạy Cloudflare Tunnel:
 
 ```python
 import requests
@@ -140,7 +139,7 @@ response = requests.get("http://127.0.0.1:5001", timeout=10)
 print("Flask HTTP status:", response.status_code)
 ```
 
-Kết quả phải là `Flask HTTP status: 200`. Lệnh trên dùng Ollama/Gemma để tóm
+Kết quả phải là `Flask HTTP status: 200`. Lệnh trên dùng Ollama/Qwen để tóm
 tắt và không đụng đến SQL Server. Nó tương đương với lệnh terminal:
 
 ```bash
@@ -154,8 +153,8 @@ Nếu muốn Gemini tóm tắt thay cho Ollama, chỉ đổi danh sách lệnh t
 ```
 
 Đây là thay đổi cờ chạy, không phải sửa `app.py`. Khi dùng `--api`, cần đặt
-`GEMINI_API_KEY` trong Colab Secrets. Ollama vẫn cần chạy nếu chọn **Gemma 4
-E2B** làm engine transcript trên giao diện.
+`GEMINI_API_KEY` trong Colab Secrets. Khi dùng `--api`, có thể bỏ qua bước cài
+và khởi động Ollama vì các engine transcript còn lại không phụ thuộc Ollama.
 
 ### 4. Tạo URL demo tạm thời
 
@@ -188,10 +187,17 @@ Mỗi khi Colab bị `Disconnect and delete runtime`, phải chạy lại các c
 đúng thứ tự trên vì máy ảo và dữ liệu RAM đã bị xóa. Bạn vẫn không cần sửa bất
 kỳ dòng nào trong `app.py`.
 
-Trên T4, cấu hình dễ ổn định nhất là chọn **Gemma 4 E2B** và tắt diarization.
-Whisper `large-v3`, pyannote và Ollama cùng giữ model trên GPU có thể vượt VRAM.
+Trên T4, cấu hình dễ ổn định nhất là chọn **Zipformer 30M** và tắt diarization.
+Whisper `large-v3`, pyannote và Qwen cùng giữ model trên GPU có thể vượt VRAM.
 Nếu cần Whisper hoặc diarization, dùng `--api` cho phần tóm tắt hoặc ép
 `DIARIZATION_DEVICE=cpu` để giảm tranh chấp VRAM.
+
+## Whisper cho cuộc họp đa ngôn ngữ
+
+Whisper được giữ lại cho các cuộc họp tiếng Anh hoặc có nhiều ngôn ngữ. App
+truyền `language=None` để Whisper tự nhận diện thay vì ép tiếng Việt. Model mặc
+định hiện là `large-v3`; model này chính xác nhưng chậm và cần nhiều RAM/VRAM
+hơn NghiASR hoặc Zipformer.
 
 ## Zipformer 30M
 
@@ -209,32 +215,10 @@ python app.py
 Model Zipformer này có giấy phép **CC BY-NC-ND 4.0**, vì vậy chỉ nên dùng cho
 nghiên cứu/demo phi thương mại nếu chưa có giấy phép khác từ tác giả.
 
-## PhoASR Whisper Small
+## Tách người nói (Whisper, NghiASR và Zipformer)
 
-Dropdown transcript có thêm `Qualcomm-AI-Research/PhoASR-whisper-small`, model
-Whisper Small được fine-tune cho tiếng Việt. Model chạy qua Transformers, có
-word timestamp và dùng chung sliding window 30 giây/overlap 5 giây cùng pipeline
-gán speaker hiện có. Lần chạy đầu, Hugging Face tải gần 1 GB trọng số; các lần
-sau dùng cache trên máy.
-
-Thiết bị và kiểu dữ liệu được chọn tự động: CUDA dùng `float16`, CPU/MPS dùng
-`float32`. Có thể cấu hình mà không sửa code:
-
-```powershell
-$env:PHOASR_DEVICE="cuda"       # auto, cuda, cpu hoặc mps
-$env:PHOASR_DTYPE="float16"    # auto, float16, float32 hoặc bfloat16
-python app.py
-```
-
-Checkpoint được phát hành theo BSD-3-Clause-Clear kèm Qualcomm Responsible AI
-License và model card nêu mục đích nghiên cứu/giáo dục. Cần rà soát điều khoản
-trước khi đưa vào sản phẩm thương mại, đồng thời ghi nguồn model nếu phân phối
-phần mềm hoặc công bố kết quả.
-
-## Tách người nói (Whisper, NghiASR, Zipformer và PhoASR)
-
-Giao diện có tùy chọn **Tách người nói** cho Whisper, NghiASR, Zipformer và
-PhoASR. Khi bật, app thực hiện pipeline sau:
+Giao diện có tùy chọn **Tách người nói** cho Whisper, NghiASR và Zipformer. Khi
+bật, app thực hiện pipeline sau:
 
 1. Ghép các file theo đúng thứ tự tải lên và đổi toàn bộ cuộc họp thành WAV
    mono 16 kHz bằng FFmpeg.

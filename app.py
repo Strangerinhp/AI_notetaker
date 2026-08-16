@@ -1,10 +1,10 @@
 """
 app.py
 ------
-Web app self-hosted để ghi biên bản họp từ file audio, chạy 100% local:
-  - Whisper (transcribe.py)  -> chuyển giọng nói thành văn bản
-  - Ollama  (summarize.py)   -> tóm tắt thành biên bản họp
-  - FFmpeg  (audio_utils.py) -> cắt file audio dài thành từng đoạn nhỏ
+Web app self-hosted để ghi biên bản họp từ file audio:
+  - Whisper/NghiASR/Zipformer -> chuyển giọng nói thành văn bản
+  - Ollama hoặc Gemini        -> tóm tắt thành biên bản họp
+  - FFmpeg                    -> chuẩn bị và chia nhỏ audio
 
 Chạy:
     python app.py
@@ -58,7 +58,7 @@ SEGMENT_MINUTES = 2
 NGHIASR_SEGMENT_MINUTES = 0.5
 ZIPFORMER_SEGMENT_MINUTES = 0.5
 DEFAULT_MIN_SPEAKER_TURN_SECONDS = 2.0
-WHISPER_LANGUAGE = "vi"  # None = tự nhận diện ngôn ngữ; đặt "vi" nếu luôn là tiếng Việt
+WHISPER_LANGUAGE = None  # Tự nhận diện để hỗ trợ cả cuộc họp tiếng Việt và tiếng Anh.
 OLLAMA_MODEL = "qwen3.5:9b"  # đổi theo model bạn đã pull trong Ollama
 
 TRANSCRIBE_ENGINES = {
@@ -67,12 +67,6 @@ TRANSCRIBE_ENGINES = {
         "module": "transcribe_whisper",
         "segment_minutes": SEGMENT_MINUTES,
         "diarization": True,
-    },
-    "gemma": {
-        "label": "Gemma 4 E2B",
-        "module": "transcribe_gemma",
-        "segment_minutes": SEGMENT_MINUTES,
-        "diarization": False,
     },
     "nghiasr": {
         "label": "NghiASR",
@@ -84,12 +78,6 @@ TRANSCRIBE_ENGINES = {
         "label": "Zipformer 30M",
         "module": "transcribe_zipformer",
         "segment_minutes": ZIPFORMER_SEGMENT_MINUTES,
-        "diarization": True,
-    },
-    "phoasr": {
-        "label": "PhoASR Whisper Small",
-        "module": "transcribe_phoasr",
-        "segment_minutes": SEGMENT_MINUTES,
         "diarization": True,
     },
 }
@@ -396,7 +384,7 @@ def parse_diarization_options(form, transcribe_engine: str):
 def process_audio_files(
     file_paths: list[str],
     job_id: str,
-    transcribe_engine: str = "whisper",
+    transcribe_engine: str = "zipformer",
     meeting_title: str = "Kết luận cuộc họp",
     diarization_enabled: bool = False,
     speaker_count: int | None = None,

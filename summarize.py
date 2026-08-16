@@ -84,7 +84,7 @@ def query_ollama(prompt: str, model: str = DEFAULT_MODEL, timeout: int = 600) ->
 
     Args:
         prompt: nội dung prompt.
-        model: tên model đã pull trong Ollama (vd "gemma3:27b", "phi4", "llama3.1").
+        model: tên model đã pull trong Ollama (vd "qwen3.5:9b", "phi4", "llama3.1").
         timeout: thời gian chờ tối đa (giây) — model lớn/transcript dài cần lâu hơn.
 
     Returns:

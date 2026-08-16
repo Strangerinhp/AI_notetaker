@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +21,8 @@ from lxml import etree
 
 BASE_DIR = Path(__file__).resolve().parent
 REPORT_TEMPLATE_PATH = BASE_DIR / "templates" / "ptc1_report_template.docx"
+REPORT_TITLE_PLACEHOLDER = "[TÊN BÁO CÁO]"
+REPORT_CONTENT_PLACEHOLDER = "[NỘI DUNG BIÊN BẢN ĐƯỢC CHÈN TẠI ĐÂY]"
 
 FONT_NAME = "Times New Roman"
 BODY_SIZE = 14
@@ -49,6 +52,14 @@ INLINE_RE = re.compile(
     r"`([^`\n]+)`|"
     r"\[([^]\n]+)\]\(([^)\n]+)\)"
 )
+REPORT_DATE_RE = re.compile(
+    r"Hà Nội,\s*ngày\s+\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4}",
+    re.IGNORECASE,
+)
+
+
+class ReportTemplateError(ValueError):
+    """Raised when the retained report template no longer has its required slots."""
 
 
 def _set_run_font(
@@ -68,13 +79,6 @@ def _set_run_font(
     run_fonts = run_properties.get_or_add_rFonts()
     for font_key in ("ascii", "hAnsi", "eastAsia", "cs"):
         run_fonts.set(qn(f"w:{font_key}"), FONT_NAME)
-
-
-def _clear_document_body(document) -> None:
-    body = document._element.body
-    for child in list(body):
-        if child.tag != qn("w:sectPr"):
-            body.remove(child)
 
 
 def _clear_story_container(container) -> None:
@@ -159,191 +163,6 @@ def _set_table_geometry(table, widths_cm: list[float]) -> None:
     )
 
 
-def _set_reference_header_position(table) -> None:
-    """Match the source's floating authority table placement exactly."""
-    properties = table._tbl.tblPr
-    alignment = properties.find(qn("w:jc"))
-    if alignment is not None:
-        properties.remove(alignment)
-
-    positioning = properties.find(qn("w:tblpPr"))
-    if positioning is None:
-        positioning = OxmlElement("w:tblpPr")
-        table_width = properties.find(qn("w:tblW"))
-        properties.insert(
-            properties.index(table_width) if table_width is not None else 0,
-            positioning,
-        )
-    for key, value in {
-        "leftFromText": "180",
-        "rightFromText": "180",
-        "vertAnchor": "text",
-        "horzAnchor": "margin",
-        "tblpXSpec": "center",
-        "tblpY": "-130",
-    }.items():
-        positioning.set(qn(f"w:{key}"), value)
-
-
-def _set_reference_cell_margins(table) -> None:
-    for row in table.rows:
-        for cell in row.cells:
-            properties = cell._tc.get_or_add_tcPr()
-            margins = properties.first_child_found_in("w:tcMar")
-            if margins is None:
-                margins = OxmlElement("w:tcMar")
-                properties.append(margins)
-            for edge in ("left", "right"):
-                node = margins.find(qn(f"w:{edge}"))
-                if node is None:
-                    node = OxmlElement(f"w:{edge}")
-                    margins.append(node)
-                node.set(qn("w:w"), "115")
-                node.set(qn("w:type"), "dxa")
-
-
-def _set_row_height_dxa(row, height_dxa: int) -> None:
-    properties = row._tr.get_or_add_trPr()
-    height = properties.find(qn("w:trHeight"))
-    if height is None:
-        height = OxmlElement("w:trHeight")
-        properties.append(height)
-    height.set(qn("w:val"), str(height_dxa))
-    height.attrib.pop(qn("w:hRule"), None)
-
-
-def _drawing_element(namespace: str, tag: str):
-    return etree.Element(f"{{{namespace}}}{tag}")
-
-
-def _add_floating_rule(
-    paragraph,
-    *,
-    width_emu: int,
-    horizontal_offset_emu: int,
-    vertical_offset_emu: int,
-    shape_id: int,
-) -> None:
-    """Add the same independent 0.75 pt rule used by the source DOCX."""
-    run = paragraph.add_run()
-    _set_run_font(run, size=BODY_SIZE)
-    run_properties = run._element.get_or_add_rPr()
-    run_properties.append(OxmlElement("w:noProof"))
-
-    drawing = OxmlElement("w:drawing")
-    anchor = _drawing_element(WP_NS, "anchor")
-    for key, value in {
-        "distT": "0",
-        "distB": "0",
-        "distL": "114300",
-        "distR": "114300",
-        "simplePos": "0",
-        "relativeHeight": str(251663360 + shape_id * 1024),
-        "behindDoc": "0",
-        "locked": "0",
-        "layoutInCell": "1",
-        "hidden": "0",
-        "allowOverlap": "1",
-    }.items():
-        anchor.set(key, value)
-
-    simple_position = _drawing_element(WP_NS, "simplePos")
-    simple_position.set("x", "0")
-    simple_position.set("y", "0")
-    anchor.append(simple_position)
-
-    horizontal = _drawing_element(WP_NS, "positionH")
-    horizontal.set("relativeFrom", "column")
-    horizontal_offset = _drawing_element(WP_NS, "posOffset")
-    horizontal_offset.text = str(horizontal_offset_emu)
-    horizontal.append(horizontal_offset)
-    anchor.append(horizontal)
-
-    vertical = _drawing_element(WP_NS, "positionV")
-    vertical.set("relativeFrom", "paragraph")
-    vertical_offset = _drawing_element(WP_NS, "posOffset")
-    vertical_offset.text = str(vertical_offset_emu)
-    vertical.append(vertical_offset)
-    anchor.append(vertical)
-
-    extent = _drawing_element(WP_NS, "extent")
-    extent.set("cx", str(width_emu))
-    extent.set("cy", "12700")
-    anchor.append(extent)
-
-    effect_extent = _drawing_element(WP_NS, "effectExtent")
-    for edge in ("l", "t", "r", "b"):
-        effect_extent.set(edge, "0")
-    anchor.append(effect_extent)
-    anchor.append(_drawing_element(WP_NS, "wrapNone"))
-
-    document_properties = _drawing_element(WP_NS, "docPr")
-    document_properties.set("id", str(100 + shape_id))
-    document_properties.set("name", f"PTC1 rule {shape_id}")
-    anchor.append(document_properties)
-    anchor.append(_drawing_element(WP_NS, "cNvGraphicFramePr"))
-
-    graphic = _drawing_element(A_NS, "graphic")
-    graphic_data = _drawing_element(A_NS, "graphicData")
-    graphic_data.set(
-        "uri",
-        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
-    )
-    shape = _drawing_element(WPS_NS, "wsp")
-    shape.append(_drawing_element(WPS_NS, "cNvCnPr"))
-    shape_properties = _drawing_element(WPS_NS, "spPr")
-    transform = _drawing_element(A_NS, "xfrm")
-    offset = _drawing_element(A_NS, "off")
-    offset.set("x", "0")
-    offset.set("y", "0")
-    transform.append(offset)
-    transform_extent = _drawing_element(A_NS, "ext")
-    transform_extent.set("cx", str(width_emu))
-    transform_extent.set("cy", "12700")
-    transform.append(transform_extent)
-    shape_properties.append(transform)
-    geometry = _drawing_element(A_NS, "prstGeom")
-    geometry.set("prst", "straightConnector1")
-    geometry.append(_drawing_element(A_NS, "avLst"))
-    shape_properties.append(geometry)
-    shape_properties.append(_drawing_element(A_NS, "noFill"))
-    line = _drawing_element(A_NS, "ln")
-    line.set("w", "9525")
-    line.set("cap", "flat")
-    line.set("cmpd", "sng")
-    solid_fill = _drawing_element(A_NS, "solidFill")
-    color = _drawing_element(A_NS, "srgbClr")
-    color.set("val", "000000")
-    solid_fill.append(color)
-    line.append(solid_fill)
-    dash = _drawing_element(A_NS, "prstDash")
-    dash.set("val", "solid")
-    line.append(dash)
-    line.append(_drawing_element(A_NS, "round"))
-    shape_properties.append(line)
-    shape.append(shape_properties)
-    shape.append(_drawing_element(WPS_NS, "bodyPr"))
-    graphic_data.append(shape)
-    graphic.append(graphic_data)
-    anchor.append(graphic)
-    drawing.append(anchor)
-    run._r.append(drawing)
-
-
-def _remove_table_borders(table) -> None:
-    properties = table._tbl.tblPr
-    borders = properties.first_child_found_in("w:tblBorders")
-    if borders is None:
-        borders = OxmlElement("w:tblBorders")
-        properties.append(borders)
-    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        element = borders.find(qn(f"w:{edge}"))
-        if element is None:
-            element = OxmlElement(f"w:{edge}")
-            borders.append(element)
-        element.set(qn("w:val"), "nil")
-
-
 def _add_page_number(paragraph) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_before = Pt(0)
@@ -420,140 +239,6 @@ def _configure_document(document) -> None:
         style.paragraph_format.space_before = Pt(3)
         style.paragraph_format.space_after = Pt(3)
         style.paragraph_format.line_spacing = 1.0
-
-
-def _add_cell_line(
-    cell,
-    text: str,
-    *,
-    size: float = BODY_SIZE,
-    bold: bool = False,
-    italic: bool = False,
-    underline: bool = False,
-    alignment=WD_ALIGN_PARAGRAPH.CENTER,
-) -> None:
-    paragraph = cell.paragraphs[0] if not cell.text else cell.add_paragraph()
-    paragraph.alignment = alignment
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(0)
-    paragraph.paragraph_format.line_spacing = 1.0
-    run = paragraph.add_run(text)
-    _set_run_font(run, size=size, bold=bold, italic=italic)
-    run.underline = underline
-
-
-def _add_institutional_header(document, report_date: date) -> None:
-    table = document.add_table(rows=2, cols=2)
-    _set_table_geometry_dxa(
-        table,
-        HEADER_TABLE_WIDTHS_DXA,
-        alignment=None,
-        zero_cell_margins=False,
-    )
-    _set_reference_header_position(table)
-    _set_reference_cell_margins(table)
-    _remove_table_borders(table)
-    _set_row_height_dxa(table.rows[0], 1078)
-    _set_row_height_dxa(table.rows[1], 506)
-
-    left, right = table.rows[0].cells
-    _add_cell_line(left, "TỔNG CÔNG TY", size=13)
-    _add_cell_line(left, "TRUYỀN TẢI ĐIỆN QUỐC GIA", size=13)
-    _add_cell_line(
-        left,
-        "CÔNG TY TRUYỀN TẢI ĐIỆN 1",
-        size=13,
-        bold=True,
-    )
-    _add_floating_rule(
-        left.paragraphs[-1],
-        width_emu=1682750,
-        horizontal_offset_emu=508000,
-        vertical_offset_emu=215900,
-        shape_id=1,
-    )
-    _add_cell_line(
-        right,
-        "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
-        size=13,
-        bold=True,
-    )
-    right.paragraphs[-1].paragraph_format.line_spacing = 1.3333333333333333
-    _add_cell_line(
-        right,
-        "Độc lập – Tự do – Hạnh phúc",
-        size=14,
-        bold=True,
-    )
-    right.paragraphs[-1].paragraph_format.line_spacing = 1.3333333333333333
-    motto_rule = right.add_paragraph()
-    motto_rule.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    motto_rule.paragraph_format.space_before = Pt(0)
-    motto_rule.paragraph_format.space_after = Pt(0)
-    motto_rule.paragraph_format.line_spacing = 1.3333333333333333
-    _add_floating_rule(
-        motto_rule,
-        width_emu=1224280,
-        horizontal_offset_emu=1092200,
-        vertical_offset_emu=36830,
-        shape_id=2,
-    )
-
-    number_cell, date_cell = table.rows[1].cells
-    _add_cell_line(
-        number_cell,
-        "Số: [SỐ VĂN BẢN]/TB-PTC1",
-        size=14,
-        italic=True,
-    )
-    _add_cell_line(
-        date_cell,
-        (
-            f"Hà Nội, ngày {report_date.day:02d} tháng {report_date.month:02d} "
-            f"năm {report_date.year}"
-        ),
-        size=14,
-        italic=True,
-    )
-
-    after = document.add_paragraph()
-    after.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    after.paragraph_format.space_before = Pt(0)
-    after.paragraph_format.space_after = Pt(0)
-    after.paragraph_format.line_spacing = 1.0
-
-
-def _add_formal_title(document, title: str) -> None:
-    heading = document.add_paragraph()
-    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    heading.paragraph_format.space_before = Pt(0)
-    heading.paragraph_format.space_after = Pt(0)
-    heading.paragraph_format.line_spacing = 1.15
-    heading.paragraph_format.keep_with_next = True
-    _set_run_font(heading.add_run("THÔNG BÁO"), bold=True)
-
-    subtitle = document.add_paragraph()
-    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitle.paragraph_format.space_before = Pt(0)
-    subtitle.paragraph_format.space_after = Pt(0)
-    subtitle.paragraph_format.line_spacing = 1.15
-    subtitle.paragraph_format.keep_with_next = True
-    _set_run_font(subtitle.add_run(title), bold=True)
-
-    rule = document.add_paragraph()
-    rule.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    rule.paragraph_format.first_line_indent = Cm(1.0)
-    rule.paragraph_format.space_before = Pt(3)
-    rule.paragraph_format.space_after = Pt(3)
-    rule.paragraph_format.line_spacing = 1.0
-    rule.paragraph_format.keep_with_next = True
-    _add_floating_rule(
-        rule,
-        width_emu=1677035,
-        horizontal_offset_emu=1930400,
-        vertical_offset_emu=105390,
-        shape_id=3,
-    )
 
 
 def _add_inline_runs(paragraph, text: str, *, size: float = BODY_SIZE) -> None:
@@ -806,63 +491,6 @@ def _strip_formal_markdown_title(markdown: str) -> str:
     return "\n".join(lines).lstrip("\n")
 
 
-def _add_closing_block(document) -> None:
-    notification = document.add_paragraph()
-    _format_body_paragraph(notification, first_line=True)
-    notification.paragraph_format.line_spacing = 1.15
-    notification.paragraph_format.keep_with_next = True
-    _add_inline_runs(
-        notification,
-        (
-            "Thừa lệnh Giám đốc, Văn phòng Công ty thông báo tới các Phòng chức năng "
-            "trong Công ty, các đơn vị trực thuộc biết và thực hiện."
-        ),
-    )
-
-    regards = document.add_paragraph()
-    _format_body_paragraph(regards, first_line=True)
-    regards.paragraph_format.line_spacing = 1.15
-    regards.paragraph_format.keep_with_next = True
-    _add_inline_runs(regards, "Trân trọng./.")
-
-    table = document.add_table(rows=1, cols=2)
-    _set_table_geometry_dxa(
-        table,
-        SIGNOFF_TABLE_WIDTHS_DXA,
-        zero_cell_margins=False,
-    )
-    _set_reference_cell_margins(table)
-    _remove_table_borders(table)
-    left, right = table.rows[0].cells
-    left.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-    right.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-
-    _add_cell_line(
-        left,
-        "Nơi nhận:",
-        size=14,
-        bold=True,
-        italic=True,
-        alignment=WD_ALIGN_PARAGRAPH.LEFT,
-    )
-    for recipient in (
-        "[NƠI NHẬN 1];",
-        "[NƠI NHẬN 2];",
-        "[NƠI NHẬN 3];",
-        "[NƠI NHẬN 4];",
-        "Lưu: VT,VP.",
-    ):
-        _add_cell_line(left, recipient, size=11, alignment=WD_ALIGN_PARAGRAPH.LEFT)
-    _add_cell_line(left, " ", size=11, alignment=WD_ALIGN_PARAGRAPH.LEFT)
-
-    _add_cell_line(right, "TL. GIÁM ĐỐC", bold=True)
-    _add_cell_line(right, "[CHỨC DANH 1]", bold=True)
-    _add_cell_line(right, "[CHỨC DANH 2]", bold=True)
-    for _ in range(6):
-        _add_cell_line(right, " ", size=11)
-    _add_cell_line(right, "[HỌ VÀ TÊN]", bold=True)
-
-
 def _add_transcript(document, markdown: str, title: str) -> None:
     _add_heading(document, "TRANSCRIPT CUỘC HỌP", 1, title_slot=True)
     if title:
@@ -876,12 +504,91 @@ def _add_transcript(document, markdown: str, title: str) -> None:
         _add_inline_runs(paragraph, line, size=12)
 
 
-def _new_document_from_template(template_path: Path | None = None):
-    source = template_path or REPORT_TEMPLATE_PATH
-    document = Document(source) if source and source.is_file() else Document()
-    _clear_document_body(document)
+def _new_transcript_document():
+    document = Document()
     _configure_document(document)
     return document
+
+
+def _load_report_template(template_path: Path | None = None):
+    source = Path(template_path) if template_path else REPORT_TEMPLATE_PATH
+    if not source.is_file():
+        raise ReportTemplateError(f"Không tìm thấy template báo cáo Word: {source}")
+    return Document(source)
+
+
+def _replace_slot_paragraph(paragraph, value: str) -> None:
+    """Replace a whole-paragraph slot while retaining its original formatting."""
+    if paragraph.runs:
+        paragraph.runs[0].text = value
+        for run in paragraph.runs[1:]:
+            run.text = ""
+    else:
+        paragraph.add_run(value)
+
+
+def _find_body_slot(document, placeholder: str):
+    matches = [
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.text.strip() == placeholder
+    ]
+    if len(matches) != 1:
+        raise ReportTemplateError(
+            f"Template Word phải có đúng một đoạn chứa {placeholder}."
+        )
+    return matches[0]
+
+
+def _replace_report_date(document, report_date: date) -> None:
+    replacement = (
+        f"Hà Nội, ngày {report_date.day:02d} tháng {report_date.month:02d} "
+        f"năm {report_date.year}"
+    )
+    matches = []
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    if REPORT_DATE_RE.fullmatch(paragraph.text.strip()):
+                        matches.append(paragraph)
+    if len(matches) != 1:
+        raise ReportTemplateError(
+            "Template Word phải có đúng một dòng ngày dạng "
+            "'Hà Nội, ngày DD tháng MM năm YYYY'."
+        )
+    _replace_slot_paragraph(matches[0], replacement)
+
+
+def _insert_markdown_at_report_slot(document, markdown: str) -> None:
+    marker = _find_body_slot(document, REPORT_CONTENT_PLACEHOLDER)
+    body = document._element.body
+    existing_nodes = set(body.iterchildren())
+
+    _add_markdown(document, markdown)
+    generated_nodes = [
+        node
+        for node in body.iterchildren()
+        if node not in existing_nodes and node.tag != qn("w:sectPr")
+    ]
+    for node in generated_nodes:
+        marker._p.addprevious(node)
+    marker._p.getparent().remove(marker._p)
+
+
+def _fill_report_template(
+    document,
+    markdown: str,
+    title: str,
+    report_date: date,
+) -> None:
+    title_slot = _find_body_slot(document, REPORT_TITLE_PLACEHOLDER)
+    _replace_slot_paragraph(title_slot, title)
+    _replace_report_date(document, report_date)
+    _insert_markdown_at_report_slot(
+        document,
+        _strip_formal_markdown_title(markdown),
+    )
 
 
 def _set_clean_properties(document, title: str) -> None:
@@ -905,31 +612,36 @@ def export_markdown_to_docx(
 ) -> None:
     """Write summary/transcript Markdown as an editable `.docx` file."""
     normalized_title = title.strip() or "Kết luận cuộc họp"
-    document = _new_document_from_template(template_path)
-    _set_clean_properties(document, normalized_title)
 
     if document_type == "transcript":
+        document = _new_transcript_document()
+        _set_clean_properties(document, normalized_title)
         _add_transcript(document, markdown, normalized_title)
     else:
-        effective_date = report_date.date() if isinstance(report_date, datetime) else report_date
-        _add_institutional_header(document, effective_date or datetime.now().date())
-        _add_formal_title(document, normalized_title)
-        _add_markdown(document, _strip_formal_markdown_title(markdown))
-        _add_closing_block(document)
+        document = _load_report_template(template_path)
+        _set_clean_properties(document, normalized_title)
+        effective_date = (
+            report_date.date()
+            if isinstance(report_date, datetime)
+            else report_date
+        )
+        _fill_report_template(
+            document,
+            markdown,
+            normalized_title,
+            effective_date or datetime.now().date(),
+        )
 
     document.save(output)
 
 
 def create_reusable_template(reference_path: str | Path, output_path: str | Path) -> None:
-    """Create the clean reusable PTC1 template from the retained reference DOCX."""
+    """Validate and copy a retained PTC1 template without rebuilding its layout."""
     reference = Path(reference_path)
     output = Path(output_path)
+    document = Document(reference)
+    _find_body_slot(document, REPORT_TITLE_PLACEHOLDER)
+    _find_body_slot(document, REPORT_CONTENT_PLACEHOLDER)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("wb") as destination:
-        export_markdown_to_docx(
-            "[NỘI DUNG BIÊN BẢN ĐƯỢC CHÈN TẠI ĐÂY]",
-            destination,
-            title="[TÊN BÁO CÁO]",
-            document_type="summary",
-            template_path=reference,
-        )
+    if reference.resolve() != output.resolve():
+        shutil.copyfile(reference, output)

@@ -31,6 +31,7 @@ from database import (
     check_database,
     complete_meeting,
     complete_transcription,
+    delete_meeting as delete_database_meeting,
     get_meeting,
     get_meetings,
     get_word_document,
@@ -195,6 +196,40 @@ def get_stored_meetings() -> list[dict]:
         }
         for meeting in meetings
     ]
+
+
+def delete_stored_meeting(job_id: str):
+    """Delete meeting metadata first, then best-effort cleanup its DOCX file."""
+    meeting = get_stored_meeting(job_id)
+    if not meeting:
+        return None, "missing"
+    if meeting.get("status") == "summarizing":
+        return None, "busy"
+
+    if database_enabled():
+        deleted = delete_database_meeting(job_id)
+        if not deleted:
+            remaining = get_meeting(job_id)
+            return None, (
+                "busy"
+                if remaining and remaining.get("status") == "summarizing"
+                else "missing"
+            )
+        relative_path = deleted.get("relative_path")
+        with jobs_lock:
+            jobs.pop(job_id, None)
+    else:
+        with jobs_lock:
+            job = jobs.get(job_id)
+            if not job:
+                return None, "missing"
+            if job.get("status") == "summarizing":
+                return None, "busy"
+            deleted = jobs.pop(job_id)
+            relative_path = deleted.get("word_file_path")
+
+    remove_word_document(relative_path)
+    return True, None
 
 
 def save_stored_meeting(
@@ -778,6 +813,18 @@ def meeting_detail(result_id):
     if not meeting:
         return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
     return jsonify(meeting)
+
+
+@app.route("/api/meetings/<result_id>", methods=["DELETE"])
+def delete_meeting_route(result_id):
+    deleted, reason = delete_stored_meeting(result_id)
+    if reason == "busy":
+        return jsonify({
+            "error": "Không thể xoá khi cuộc họp đang được tóm tắt."
+        }), 409
+    if not deleted:
+        return jsonify({"error": "Không tìm thấy cuộc họp"}), 404
+    return jsonify({"deleted": True, "id": result_id})
 
 
 @app.route("/api/meetings/<result_id>", methods=["PUT"])

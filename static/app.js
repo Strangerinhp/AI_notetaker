@@ -318,11 +318,15 @@
     }
 
     meetings.forEach((meeting) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `history-item${
+      const item = document.createElement("div");
+      item.className = `history-item${
         state.current?.id === meeting.id ? " active" : ""
       }`;
+
+      const openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.className = "history-open";
+      openButton.title = meeting.title;
 
       const icon = document.createElement("span");
       icon.className = "history-icon";
@@ -336,10 +340,56 @@
       const date = document.createElement("small");
       date.textContent = formatDate(meeting.updated_at);
       copy.append(title, date);
-      button.append(icon, copy);
-      button.addEventListener("click", () => openMeeting(meeting.id));
-      ui.history.appendChild(button);
+      openButton.append(icon, copy);
+      openButton.addEventListener("click", () => openMeeting(meeting.id));
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "history-delete";
+      deleteButton.title = "Xoá cuộc họp";
+      deleteButton.setAttribute("aria-label", `Xoá ${meeting.title}`);
+      deleteButton.innerHTML =
+        '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>';
+      deleteButton.addEventListener("click", () => deleteMeeting(meeting, deleteButton));
+
+      item.append(openButton, deleteButton);
+      ui.history.appendChild(item);
     });
+  }
+
+  async function deleteMeeting(meeting, deleteButton) {
+    const confirmed = window.confirm(
+      `Xoá “${meeting.title}”?\n\nTranscript, báo cáo và file Word đã lưu sẽ bị xoá vĩnh viễn.`,
+    );
+    if (!confirmed) return;
+
+    deleteButton.disabled = true;
+    const deletingCurrent = state.current?.id === meeting.id;
+    if (deletingCurrent && state.saveTimer) {
+      window.clearTimeout(state.saveTimer);
+      state.saveTimer = null;
+      state.saveAgain = false;
+    }
+    while (deletingCurrent && state.saving) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+
+    try {
+      await api(`/api/meetings/${encodeURIComponent(meeting.id)}`, {
+        method: "DELETE",
+      });
+      state.meetings = state.meetings.filter((item) => item.id !== meeting.id);
+      if (deletingCurrent) {
+        state.current = null;
+        await showUpload();
+      } else {
+        renderHistory();
+      }
+      toast("Đã xoá cuộc họp.");
+    } catch (error) {
+      deleteButton.disabled = false;
+      toast(`Không thể xoá cuộc họp: ${error.message}`, true);
+    }
   }
 
   function storeEditorValue() {

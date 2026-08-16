@@ -327,6 +327,32 @@ def get_meetings():
         connection.close()
 
 
+def delete_meeting(job_id):
+    """Delete one non-running meeting and return its private Word path."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """
+            DELETE FROM dbo.MeetingHistory
+            OUTPUT DELETED.WordFilePath
+            WHERE Id = ? AND Status <> 'summarizing'
+            """,
+            str(job_id),
+        )
+        row = cursor.fetchone()
+        connection.commit()
+        if row is None:
+            return None
+        return {"relative_path": row[0]}
+    except pyodbc.Error as error:
+        connection.rollback()
+        raise _friendly_error(error) from error
+    finally:
+        cursor.close()
+        connection.close()
+
+
 def update_meeting(job_id, transcript, minutes=None, diarization_segments=None):
     segments_json = (
         json.dumps(

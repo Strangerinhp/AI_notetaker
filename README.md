@@ -11,11 +11,13 @@ python app.py --no-database
 ```
 
 Chế độ này không kiểm tra, đọc hoặc ghi SQL Server. Sidebar và transcript editor
-chỉ dùng dữ liệu trong RAM và mất khi tiến trình Flask dừng. Word viewer và tải
-DOCX vẫn hoạt động bằng cách tạo tài liệu theo từng yêu cầu; byte của file Word
-không được giữ trong RAM. Giao diện upload Word vẫn giống chế độ có database,
-nhưng file được chọn chỉ cập nhật viewer trong tab trình duyệt hiện tại và không
-được lưu lâu dài. Có thể kết hợp với Gemini:
+chỉ dùng dữ liệu trong RAM và mất khi tiến trình Flask dừng. Báo cáo DOCX được
+ghi thành file riêng trong thư mục `word_documents/` (hoặc thư mục đặt bởi
+`WORD_STORAGE_FOLDER`), không được giữ dưới dạng blob trong RAM. Giao diện upload
+Word giống chế độ có database: file mới được lưu trên filesystem và viewer tải
+lại ngay. Vì metadata cuộc họp không có database vẫn chỉ nằm trong RAM, sau khi
+khởi động lại Flask, sidebar sẽ không tự tìm lại các file của phiên cũ. Có thể kết
+hợp với Gemini:
 
 ```powershell
 python app.py --no-database --api
@@ -43,11 +45,10 @@ MeetNote không còn gọi LLM ngay sau khi phiên âm. Luồng xử lý hiện 
    gửi tới Ollama hoặc Gemini.
 5. Bản tóm tắt được biên dịch thành DOCX và hiển thị ở màn hình Word viewer riêng,
    không nằm bên dưới transcript và không còn xuất hiện trong Markdown editor.
-6. Khi dùng SQL Server, người dùng có thể tải DOCX, chỉnh sửa bằng Microsoft Word
-   rồi chọn lại file và bấm **Lưu file Word**. File mới thay thế blob trong database
-   và viewer tải lại ngay lập tức. Ở chế độ `--no-database`, cùng thao tác upload
-   chỉ thay nội dung viewer của phiên trình duyệt hiện tại; file Word không được
-   ghi vào RAM phía server hay database.
+6. Người dùng có thể tải DOCX, chỉnh sửa bằng Microsoft Word rồi chọn lại file và
+   bấm **Lưu file Word**. File mới được lưu trong private filesystem và viewer tải
+   lại ngay lập tức. SQL Server chỉ giữ đường dẫn tương đối và metadata của file;
+   chế độ `--no-database` giữ đường dẫn trong job hiện tại nhưng vẫn ghi DOCX ra đĩa.
 
 ## Demo một ngày trên Google Colab với Ollama
 
@@ -317,8 +318,10 @@ Trong SSMS chọn `File → Open → File`, mở file `database.sql` của repo,
 bấm **Execute** hoặc `F5`.
 
 Nếu database đã được tạo bởi phiên bản cũ, vẫn chạy lại file này một lần. Script
-chỉ thêm các cột nullable còn thiếu (`WordDocument`, `WordFileName`,
-`WordUpdatedAt`) và không xóa transcript hay lịch sử hiện có.
+chỉ thêm các cột nullable còn thiếu (`WordFilePath`, `WordFileName`,
+`WordUpdatedAt`) và không xóa transcript hay lịch sử hiện có. Cột
+`WordDocument` cũ (nếu có) được giữ nguyên để tránh xóa dữ liệu ngoài ý muốn,
+nhưng app không còn đọc hoặc ghi blob này.
 
 Khi thành công, Object Explorer sẽ có:
 
@@ -403,19 +406,26 @@ SQLSERVER_DATABASE
 SQLSERVER_DRIVER
 SQLSERVER_USERNAME
 SQLSERVER_PASSWORD
+WORD_STORAGE_FOLDER
 ```
+
+`WORD_STORAGE_FOLDER` mặc định là thư mục private `word_documents/` trong repo.
+Database chỉ lưu đường dẫn tương đối bên dưới thư mục này. Khi triển khai nhiều
+instance/container, hãy trỏ biến này tới cùng một persistent/shared volume; một
+đường dẫn trên ổ đĩa cục bộ của instance khác sẽ không đọc được.
 
 ## Bảng MeetingHistory
 
 Bảng lưu UUID, tên báo cáo, thứ tự file audio, engine, transcript, Markdown nguồn
-của biên bản, file DOCX dạng `VARBINARY(MAX)`, tên file Word, timeline
+của biên bản, đường dẫn tương đối tới file DOCX, tên file Word, timeline
 diarization, trạng thái, số file, tổng dung lượng, thời điểm tạo, hoàn tất, chỉnh
 sửa Word cuối và cập nhật cuối. Sidebar hiển thị cả cuộc họp đang chờ duyệt
 transcript, đang tóm tắt, tóm tắt lỗi và đã hoàn tất.
 
 Khi sửa transcript, `LastEditedAt` và `UpdatedAt` được cập nhật. Khi lưu một
-DOCX mới, `WordDocument`, `WordFileName`, `WordUpdatedAt`, `LastEditedAt` và
-`UpdatedAt` được cập nhật trong cùng transaction. Giới hạn upload Word là 25 MB.
+DOCX mới, file được ghi atomically trên filesystem rồi `WordFilePath`,
+`WordFileName`, `WordUpdatedAt`, `LastEditedAt` và `UpdatedAt` được cập nhật trong
+database. Giới hạn upload Word là 25 MB.
 
 ## Nếu kết nối local vẫn thất bại
 

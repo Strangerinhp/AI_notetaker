@@ -21,6 +21,7 @@ env_*/
 uploads/
 temp_segments/
 results/
+word_documents/
 *.log
 *.pid
 

@@ -9,7 +9,6 @@
     current: null,
     files: [],
     pendingWordFile: null,
-    temporaryWordPreview: null,
     activeWorkspace: "transcript",
     poll: null,
     saveTimer: null,
@@ -477,25 +476,8 @@
   function updateWordFileInfo() {
     if (state.pendingWordFile) {
       ui.wordFileName.textContent = state.pendingWordFile.name;
-      const action = state.current?.word_storage_enabled === false
-        ? "Sẵn sàng cập nhật viewer"
-        : "Chưa lưu";
       ui.wordFileMeta.textContent =
-        `${(state.pendingWordFile.size / 1024 / 1024).toFixed(2)} MB · ${action}`;
-      return;
-    }
-    if (state.temporaryWordPreview) {
-      ui.wordFileName.textContent = state.temporaryWordPreview.filename;
-      ui.wordFileMeta.textContent = "Bản xem tạm · không lưu vào hệ thống";
-      return;
-    }
-    if (
-      state.current?.word_storage_enabled === false &&
-      state.current?.summary?.trim()
-    ) {
-      ui.wordFileName.textContent = "Báo cáo tạo theo yêu cầu";
-      ui.wordFileMeta.textContent =
-        "Chế độ không database · có thể tải file mới để xem tạm";
+        `${(state.pendingWordFile.size / 1024 / 1024).toFixed(2)} MB · Chưa lưu`;
       return;
     }
     if (state.current?.has_word_document || state.current?.summary?.trim()) {
@@ -511,13 +493,6 @@
   }
 
   function refreshWordViewer(force = false) {
-    if (state.temporaryWordPreview) {
-      ui.wordPlaceholder.classList.add("hidden");
-      ui.wordFrame.classList.remove("hidden");
-      ui.wordFrame.removeAttribute("src");
-      ui.wordFrame.srcdoc = state.temporaryWordPreview.html;
-      return;
-    }
     const hasWord = Boolean(
       state.current?.has_word_document || state.current?.summary?.trim(),
     );
@@ -597,7 +572,6 @@
     }
     state.current = null;
     state.pendingWordFile = null;
-    state.temporaryWordPreview = null;
     ui.wordUploadInput.value = "";
     ui.wordFrame.removeAttribute("src");
     ui.wordFrame.removeAttribute("srcdoc");
@@ -627,7 +601,6 @@
       setSaveStatus("saving", "Đang mở...");
       state.current = await api(`/api/meetings/${encodeURIComponent(id)}`);
       state.pendingWordFile = null;
-      state.temporaryWordPreview = null;
       ui.wordUploadInput.value = "";
       ui.meetingTitle.textContent = state.current.title;
       const statusText = state.current.status === "transcript_ready"
@@ -1021,12 +994,7 @@
     }
     state.pendingWordFile = file;
     updateMeetingControls();
-    setSaveStatus(
-      "saving",
-      state.current?.word_storage_enabled === false
-        ? "File Word đã chọn"
-        : "File Word chưa lưu",
-    );
+    setSaveStatus("saving", "File Word chưa lưu");
   }
 
   async function saveWordFile() {
@@ -1040,27 +1008,14 @@
         `/api/meetings/${encodeURIComponent(state.current.id)}/word`,
         { method: "POST", body: form },
       );
-      if (result.temporary) {
-        state.temporaryWordPreview = {
-          filename: result.filename,
-          html: result.viewer_html,
-        };
-      } else {
-        state.current = result;
-        state.temporaryWordPreview = null;
-      }
+      state.current = result;
       state.pendingWordFile = null;
       ui.wordUploadInput.value = "";
       updateMeetingControls();
       refreshWordViewer(true);
-      if (result.temporary) {
-        setSaveStatus("saved", "Đã cập nhật bản xem");
-        toast("Đã cập nhật Word viewer tạm thời; file không được lưu.");
-      } else {
-        setSaveStatus("saved", "Đã lưu file Word");
-        await loadHistory();
-        toast("Đã cập nhật báo cáo Word trong hệ thống.");
-      }
+      setSaveStatus("saved", "Đã lưu file Word");
+      await loadHistory();
+      toast("Đã cập nhật báo cáo Word trong hệ thống.");
     } catch (error) {
       updateMeetingControls();
       setSaveStatus("error", "Lưu Word thất bại");

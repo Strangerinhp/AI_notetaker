@@ -22,7 +22,7 @@ BEGIN
             CONSTRAINT DF_MeetingHistory_Transcript DEFAULT N'',
         Minutes NVARCHAR(MAX) NOT NULL
             CONSTRAINT DF_MeetingHistory_Minutes DEFAULT N'',
-        WordDocument VARBINARY(MAX) NULL,
+        WordFilePath NVARCHAR(1024) NULL,
         WordFileName NVARCHAR(260) NULL,
         WordUpdatedAt DATETIME2(3) NULL,
         DiarizationSegments NVARCHAR(MAX) NOT NULL
@@ -49,9 +49,11 @@ END;
 GO
 
 -- Safe, idempotent migration for databases created by older MeetNote versions.
-IF COL_LENGTH(N'dbo.MeetingHistory', N'WordDocument') IS NULL
+-- An existing WordDocument column is deliberately left untouched so this script
+-- never destroys legacy data. Current app versions no longer read or write it.
+IF COL_LENGTH(N'dbo.MeetingHistory', N'WordFilePath') IS NULL
 BEGIN
-    ALTER TABLE dbo.MeetingHistory ADD WordDocument VARBINARY(MAX) NULL;
+    ALTER TABLE dbo.MeetingHistory ADD WordFilePath NVARCHAR(1024) NULL;
 END;
 GO
 
@@ -68,7 +70,7 @@ END;
 GO
 
 SELECT
-    Id, Title, FileName, Engine, Status, WordFileName, WordUpdatedAt,
+    Id, Title, FileName, Engine, Status, WordFilePath, WordFileName, WordUpdatedAt,
     CreatedAt, LastEditedAt, UpdatedAt
 FROM dbo.MeetingHistory
 ORDER BY UpdatedAt DESC;

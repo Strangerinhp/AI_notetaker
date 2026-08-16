@@ -24,6 +24,13 @@ python app.py --no-database --api
 Nếu không có `--api`, bước tóm tắt dùng model Ollama được cấu hình trong
 `app.py`.
 
+## Cài đặt trong giao diện
+
+Nút **Cài đặt** ở cuối sidebar cho phép chọn model transcript và chỉnh prompt hệ
+thống dùng cho các lần tóm tắt tiếp theo. Zipformer 30M là model transcript mặc
+định. Cấu hình được lưu trong trình duyệt; transcript và tên báo cáo luôn được
+backend gắn tự động sau phần prompt tùy chỉnh.
+
 ## Quy trình duyệt transcript trước khi tóm tắt
 
 MeetNote không còn gọi LLM ngay sau khi phiên âm. Luồng xử lý hiện tại là:

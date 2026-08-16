@@ -36,10 +36,13 @@
         <p class="empty">Chưa có cuộc họp nào.</p>
       </nav>
 
-      <div class="local-note">
-        <i></i>
-        <span><strong>Xử lý trên máy</strong><small>Audio được xóa sau khi hoàn tất</small></span>
-      </div>
+      <button class="settings-trigger" id="settings-button" type="button">
+        <span class="settings-trigger-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+        </span>
+        <span><strong>Cài đặt</strong><small id="settings-current-model">Zipformer 30M</small></span>
+        <svg class="settings-trigger-arrow" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
     </aside>
 
     <button class="backdrop" id="backdrop" type="button" aria-label="Đóng sidebar"></button>
@@ -65,9 +68,9 @@
             <li><span>1</span><div><strong>Đặt tên báo cáo</strong>
               <p>Tên này được dùng nguyên văn trong tiêu đề Word và lịch sử.</p></div></li>
             <li><span>2</span><div><strong>Chọn bản ghi âm</strong>
-              <p>Tải một hoặc nhiều file theo đúng thứ tự cuộc họp và chọn model transcript.</p></div></li>
+              <p>Tải một hoặc nhiều file theo đúng thứ tự cuộc họp. Model transcript được chọn trong Cài đặt.</p></div></li>
             <li><span>3</span><div><strong>Kiểm tra nội dung</strong>
-              <p>Sửa trực tiếp transcript và tóm tắt bằng Markdown.</p></div></li>
+              <p>Sửa trực tiếp transcript bằng Markdown trước khi tóm tắt.</p></div></li>
             <li><span>4</span><div><strong>Xuất báo cáo Word</strong>
               <p>File sử dụng mẫu hành chính của Công ty Truyền tải điện 1.</p></div></li>
           </ol>
@@ -96,17 +99,6 @@
             <input id="file-input" type="file" hidden multiple
                    accept=".mp3,.wav,.m4a,.mp4,.ogg,.flac,.webm,audio/*,video/mp4">
           </button>
-
-          <label class="select-field">
-            <span>Model transcript</span>
-            <select id="engine-select">
-              <option value="whisper" data-diarization="true">Whisper — chính xác cao</option>
-              <option value="gemma" data-diarization="false">Gemma 4 E2B — nhẹ, qua Ollama</option>
-              <option value="nghiasr" data-diarization="true">NghiASR — tối ưu Việt / Anh</option>
-              <option value="zipformer" data-diarization="true">Zipformer 30M — tiếng Việt, CPU nhanh (phi thương mại)</option>
-              <option value="phoasr" data-diarization="true">PhoASR Whisper Small — tiếng Việt, dấu câu tốt</option>
-            </select>
-          </label>
 
           <section class="diarization-card" aria-labelledby="diarization-title">
             <label class="toggle-field">
@@ -288,6 +280,49 @@
         </section>
       </section>
     </main>
+  </div>
+
+  <div class="settings-modal hidden" id="settings-modal" aria-hidden="true">
+    <button class="settings-modal-backdrop" id="settings-backdrop" type="button"
+            aria-label="Đóng cài đặt"></button>
+    <section class="settings-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="settings-title">
+      <header class="settings-dialog-header">
+        <div><small>CẤU HÌNH ỨNG DỤNG</small><h2 id="settings-title">Cài đặt</h2></div>
+        <button class="icon-button" id="settings-close" type="button"
+                aria-label="Đóng cài đặt">×</button>
+      </header>
+
+      <div class="settings-dialog-body">
+        <label class="select-field settings-field">
+          <span>Model transcript</span>
+          <select id="engine-select">
+            <option value="whisper" data-diarization="true">Whisper — chính xác cao</option>
+            <option value="gemma" data-diarization="false">Gemma 4 E2B — nhẹ, qua Ollama</option>
+            <option value="nghiasr" data-diarization="true">NghiASR — tối ưu Việt / Anh</option>
+            <option value="zipformer" data-diarization="true" selected>Zipformer 30M — tiếng Việt, CPU nhanh (phi thương mại)</option>
+            <option value="phoasr" data-diarization="true">PhoASR Whisper Small — tiếng Việt, dấu câu tốt</option>
+          </select>
+          <small>Được áp dụng cho cuộc họp tải lên tiếp theo.</small>
+        </label>
+
+        <label class="prompt-field">
+          <span>Prompt hệ thống của LLM tóm tắt</span>
+          <textarea id="summary-prompt-input" maxlength="30000"
+                    spellcheck="true">{{ default_summary_prompt }}</textarea>
+          <small>Transcript luôn được hệ thống gắn tự động. Có thể dùng <code>{meeting_title}</code> để chèn tên báo cáo.</small>
+        </label>
+      </div>
+
+      <footer class="settings-dialog-footer">
+        <button class="secondary-button settings-reset" id="settings-reset" type="button">
+          Khôi phục mặc định
+        </button>
+        <span></span>
+        <button class="secondary-button" id="settings-cancel" type="button">Hủy</button>
+        <button class="primary-button" id="settings-save" type="button">Lưu cài đặt</button>
+      </footer>
+    </section>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>

@@ -40,7 +40,11 @@ from database import (
     update_meeting_status,
     update_word_document,
 )
-from summarize import GEMINI_MODEL, summarize_transcript
+from summarize import (
+    GEMINI_MODEL,
+    MEETING_MINUTES_SYSTEM_PROMPT,
+    summarize_transcript,
+)
 from sliding_window_asr import build_sliding_windows
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +53,7 @@ TEMP_FOLDER = os.path.join(BASE_DIR, "temp_segments")
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "ogg", "flac", "webm"}
 MAX_WORD_DOCUMENT_BYTES = 25 * 1024 * 1024
+MAX_SUMMARY_SYSTEM_PROMPT_CHARS = 30_000
 SEGMENT_MINUTES = 2
 NGHIASR_SEGMENT_MINUTES = 0.5
 ZIPFORMER_SEGMENT_MINUTES = 0.5
@@ -524,7 +529,12 @@ def process_audio_files(
         cleanup_files(file_paths)
 
 
-def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
+def summarize_meeting(
+    job_id: str,
+    transcript: str,
+    meeting_title: str,
+    system_prompt: str | None = None,
+) -> None:
     """Summarize the exact transcript revision submitted by the user."""
     try:
         minutes = summarize_transcript(
@@ -532,6 +542,7 @@ def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
             model=OLLAMA_MODEL,
             use_gemini_api=app.config["USE_GEMINI_API"],
             meeting_title=meeting_title,
+            system_prompt=system_prompt,
         )
         word_filename = (
             _safe_word_filename(meeting_title) if database_enabled() else None
@@ -573,7 +584,10 @@ def summarize_meeting(job_id: str, transcript: str, meeting_title: str) -> None:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        default_summary_prompt=MEETING_MINUTES_SYSTEM_PROMPT,
+    )
 
 
 @app.errorhandler(DatabaseError)
@@ -609,9 +623,9 @@ def upload_file():
     if len(meeting_title) > 180:
         return jsonify({"error": "Tên báo cáo không được vượt quá 180 ký tự"}), 400
 
-    transcribe_engine = request.form.get("engine", "whisper")
+    transcribe_engine = request.form.get("engine", "zipformer")
     if transcribe_engine not in TRANSCRIBE_ENGINE_LABELS:
-        transcribe_engine = "whisper"
+        transcribe_engine = "zipformer"
     try:
         diarization_enabled, speaker_count, min_speaker_turn_seconds = (
             parse_diarization_options(request.form, transcribe_engine)
@@ -759,6 +773,13 @@ def summarize_saved_transcript(result_id):
         return jsonify({"error": "Transcript đang trống."}), 400
     if len(transcript) > 20_000_000:
         return jsonify({"error": "Nội dung quá lớn"}), 413
+    system_prompt = payload.get("summary_prompt")
+    if system_prompt is not None:
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            return jsonify({"error": "Prompt tóm tắt không hợp lệ."}), 400
+        system_prompt = system_prompt.strip()
+        if len(system_prompt) > MAX_SUMMARY_SYSTEM_PROMPT_CHARS:
+            return jsonify({"error": "Prompt tóm tắt vượt quá 30.000 ký tự."}), 413
     try:
         diarization_segments = validate_diarization_segments(
             payload.get("diarization_segments")
@@ -816,7 +837,7 @@ def summarize_saved_transcript(result_id):
 
     thread = threading.Thread(
         target=summarize_meeting,
-        args=(result_id, transcript, meeting["title"]),
+        args=(result_id, transcript, meeting["title"], system_prompt),
         daemon=True,
     )
     thread.start()

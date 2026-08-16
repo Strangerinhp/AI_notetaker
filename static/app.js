@@ -1,6 +1,9 @@
 (() => {
   "use strict";
 
+  const SETTINGS_STORAGE_KEY = "meetnote.settings.v1";
+  const DEFAULT_TRANSCRIPT_ENGINE = "zipformer";
+
   const state = {
     meetings: [],
     current: null,
@@ -12,6 +15,11 @@
     saveTimer: null,
     saving: false,
     saveAgain: false,
+    settings: {
+      engine: DEFAULT_TRANSCRIPT_ENGINE,
+      summaryPrompt: "",
+    },
+    settingsReturnFocus: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -27,6 +35,15 @@
     pageKicker: $("page-kicker"),
     pageTitle: $("page-title"),
     saveStatus: $("save-status"),
+    settingsButton: $("settings-button"),
+    settingsCurrentModel: $("settings-current-model"),
+    settingsModal: $("settings-modal"),
+    settingsBackdrop: $("settings-backdrop"),
+    settingsClose: $("settings-close"),
+    settingsCancel: $("settings-cancel"),
+    settingsReset: $("settings-reset"),
+    settingsSave: $("settings-save"),
+    summaryPromptInput: $("summary-prompt-input"),
     uploadView: $("upload-view"),
     meetingView: $("meeting-view"),
     uploadCard: $("upload-card"),
@@ -162,6 +179,101 @@
 
   function closeSidebar() {
     document.body.classList.remove("sidebar-open");
+  }
+
+  function defaultSummaryPrompt() {
+    return ui.summaryPromptInput.defaultValue.trim();
+  }
+
+  function validEngine(engine) {
+    return [...ui.engine.options].some((option) => option.value === engine);
+  }
+
+  function updateSettingsSummary() {
+    const selected = [...ui.engine.options].find(
+      (option) => option.value === state.settings.engine,
+    );
+    ui.settingsCurrentModel.textContent = selected
+      ? selected.textContent.split("—")[0].trim()
+      : "Zipformer 30M";
+  }
+
+  function loadSettings() {
+    const fallback = {
+      engine: DEFAULT_TRANSCRIPT_ENGINE,
+      summaryPrompt: defaultSummaryPrompt(),
+    };
+    let stored = null;
+    try {
+      stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "null");
+    } catch (_error) {
+      stored = null;
+    }
+    state.settings = {
+      engine: validEngine(stored?.engine) ? stored.engine : fallback.engine,
+      summaryPrompt: typeof stored?.summaryPrompt === "string" && stored.summaryPrompt.trim()
+        ? stored.summaryPrompt.trim()
+        : fallback.summaryPrompt,
+    };
+    ui.engine.value = state.settings.engine;
+    ui.summaryPromptInput.value = state.settings.summaryPrompt;
+    updateSettingsSummary();
+  }
+
+  function openSettings() {
+    state.settingsReturnFocus = document.activeElement;
+    ui.engine.value = state.settings.engine;
+    ui.summaryPromptInput.value = state.settings.summaryPrompt;
+    ui.settingsModal.classList.remove("hidden");
+    ui.settingsModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("settings-open");
+    window.setTimeout(() => ui.engine.focus(), 0);
+  }
+
+  function closeSettings() {
+    ui.engine.value = state.settings.engine;
+    ui.summaryPromptInput.value = state.settings.summaryPrompt;
+    ui.settingsModal.classList.add("hidden");
+    ui.settingsModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("settings-open");
+    updateDiarizationControls();
+    state.settingsReturnFocus?.focus?.();
+    state.settingsReturnFocus = null;
+  }
+
+  function resetSettingsForm() {
+    ui.engine.value = DEFAULT_TRANSCRIPT_ENGINE;
+    ui.summaryPromptInput.value = defaultSummaryPrompt();
+    updateDiarizationControls();
+  }
+
+  function saveSettings() {
+    const summaryPrompt = ui.summaryPromptInput.value.trim();
+    if (!summaryPrompt) {
+      toast("Prompt tóm tắt không được để trống.", true);
+      ui.summaryPromptInput.focus();
+      return;
+    }
+    state.settings = {
+      engine: validEngine(ui.engine.value)
+        ? ui.engine.value
+        : DEFAULT_TRANSCRIPT_ENGINE,
+      summaryPrompt,
+    };
+    let persisted = true;
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+    } catch (_error) {
+      persisted = false;
+    }
+    updateSettingsSummary();
+    closeSettings();
+    toast(
+      persisted
+        ? "Đã lưu cài đặt."
+        : "Đã áp dụng cho phiên này; trình duyệt không cho phép lưu lâu dài.",
+      !persisted,
+    );
   }
 
   function switchWorkspace(target, refresh = true) {
@@ -661,7 +773,7 @@
     setProgress("uploading");
     const form = new FormData();
     state.files.forEach((file) => form.append("files", file));
-    form.append("engine", ui.engine.value);
+    form.append("engine", state.settings.engine);
     form.append("title", meetingTitle);
     form.append("diarization", String(ui.diarization.checked));
     if (ui.diarization.checked) {
@@ -752,6 +864,7 @@
           body: JSON.stringify({
             transcript: state.current.transcript,
             diarization_segments: state.current.diarization_segments || [],
+            summary_prompt: state.settings.summaryPrompt,
           }),
         },
       );
@@ -961,6 +1074,12 @@
     ui.backdrop.addEventListener("click", closeSidebar);
     ui.newMeeting.addEventListener("click", showUpload);
     ui.historySearch.addEventListener("input", renderHistory);
+    ui.settingsButton.addEventListener("click", openSettings);
+    ui.settingsBackdrop.addEventListener("click", closeSettings);
+    ui.settingsClose.addEventListener("click", closeSettings);
+    ui.settingsCancel.addEventListener("click", closeSettings);
+    ui.settingsReset.addEventListener("click", resetSettingsForm);
+    ui.settingsSave.addEventListener("click", saveSettings);
     document.querySelectorAll("[data-workspace-target]").forEach((button) => {
       button.addEventListener("click", () => switchWorkspace(button.dataset.workspaceTarget));
     });
@@ -1004,8 +1123,17 @@
     });
     ui.wordSaveButton.addEventListener("click", saveWordFile);
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !ui.settingsModal.classList.contains("hidden")) {
+        event.preventDefault();
+        closeSettings();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
+        if (!ui.settingsModal.classList.contains("hidden")) {
+          saveSettings();
+          return;
+        }
         if (state.pendingWordFile) saveWordFile();
         else saveMeeting();
       }
@@ -1013,6 +1141,7 @@
   }
 
   async function init() {
+    loadSettings();
     bindEvents();
     updateDiarizationControls();
     await loadHistory();

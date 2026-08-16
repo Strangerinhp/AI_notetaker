@@ -21,7 +21,7 @@ OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "40000"))
 OLLAMA_NUM_PREDICT = int(os.environ.get("OLLAMA_NUM_PREDICT", "9000"))
 OLLAMA_TEMPERATURE = float(os.environ.get("OLLAMA_TEMPERATURE", "0.8"))
 
-MEETING_MINUTES_PROMPT = """\
+MEETING_MINUTES_SYSTEM_PROMPT = """\
 Bạn là chuyên viên văn phòng chịu trách nhiệm soạn thông báo kết luận cuộc họp \
 bằng tiếng Việt. Hãy chuyển transcript thành một báo cáo Markdown có bố cục \
 giống văn bản hành chính, nhưng nội dung phải thích nghi với chính cuộc họp này.
@@ -73,11 +73,6 @@ không thêm tiêu đề trung gian "Kết luận và giao nhiệm vụ". Ví d�
 
 Nếu không có quyết định hay nhiệm vụ nào được chốt, không tạo nhóm "Giao ..." và \
 phản ánh các đề xuất chưa chốt trong "Đánh giá chung" hoặc "Nội dung khác".
-
-TRANSCRIPT
----
-{transcript}
----
 
 Chỉ trả về Markdown của báo cáo, không dùng khối mã và không thêm lời dẫn hay giải thích.
 """
@@ -191,16 +186,31 @@ def summarize_transcript(
     model: str = DEFAULT_MODEL,
     use_gemini_api: bool = False,
     meeting_title: str = "Kết luận cuộc họp",
+    system_prompt: str | None = None,
 ) -> str:
     """Tạo biên bản họp từ transcript đầy đủ."""
     if not transcript.strip():
         return "(Không có nội dung transcript để tóm tắt.)"
 
     normalized_title = meeting_title.strip() or "Kết luận cuộc họp"
-    prompt = MEETING_MINUTES_PROMPT.format(
-        transcript=transcript,
-        meeting_title=normalized_title,
+    instructions = (
+        system_prompt.strip()
+        if isinstance(system_prompt, str) and system_prompt.strip()
+        else MEETING_MINUTES_SYSTEM_PROMPT
     )
+    # Only replace the supported title placeholder. The transcript is always
+    # appended by the backend so an edited prompt cannot accidentally omit it.
+    instructions = instructions.replace("{meeting_title}", normalized_title)
+    prompt = f"""{instructions}
+
+DỮ LIỆU CUỘC HỌP
+Tên báo cáo: {normalized_title}
+
+TRANSCRIPT
+---
+{transcript}
+---
+"""
     if use_gemini_api:
         return query_gemini(prompt)
     return query_ollama(prompt, model=model)

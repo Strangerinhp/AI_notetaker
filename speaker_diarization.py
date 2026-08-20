@@ -4,7 +4,7 @@ The pipeline follows the reference notebook's order:
 
 1. concatenate uploaded recordings in upload order;
 2. convert the whole meeting to mono 16 kHz PCM WAV with FFmpeg;
-3. run pyannote Community-1 on the complete meeting;
+3. run DiariZen Large s80 v2 on the complete meeting;
 4. discard diarization turns shorter than the configured threshold;
 5. expose the normalized meeting audio and retained timeline to the ASR engine.
 
@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +28,7 @@ from audio_utils import TARGET_SAMPLE_RATE, find_ffmpeg
 
 DIARIZATION_MODEL = os.environ.get(
     "DIARIZATION_MODEL",
-    "pyannote/speaker-diarization-community-1",
+    "BUT-FIT/diarizen-wavlm-large-s80-md-v2",
 )
 DEFAULT_MIN_TURN_SECONDS = 2.0
 DEFAULT_ASR_PADDING_SECONDS = 0.05
@@ -70,80 +69,55 @@ class DiarizationResult:
     audio_duration: float = 0.0
 
 
-def _hugging_face_token() -> str | None:
-    return (
-        os.environ.get("HF_TOKEN")
-        or os.environ.get("HUGGINGFACE_TOKEN")
-        or os.environ.get("HUGGINGFACE_ACCESS_TOKEN")
-    )
-
-
 def _load_pipeline():
-    # MeetNote advertises local processing. Disable pyannote's optional
-    # anonymous usage metrics unless the operator explicitly opts in.
-    os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
     try:
         import torch
-        # Pyannote warns when TorchCodec cannot find shared FFmpeg DLLs. This
-        # module deliberately passes a preloaded waveform dictionary, so its
-        # built-in decoder is not used and that warning is not actionable.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=r"\s*torchcodec is not installed correctly.*",
-            )
-            from pyannote.audio import Pipeline
     except ImportError as error:
         raise DiarizationError(
-            "Thiếu pyannote.audio. Hãy chạy: pip install -r requirements.txt"
+            "Thiếu PyTorch CUDA, không thể chạy DiariZen. Hãy cài môi trường "
+            "DiariZen theo hướng dẫn trong README.md."
         ) from error
 
-    token = _hugging_face_token()
-    try:
-        pipeline = Pipeline.from_pretrained(
-            DIARIZATION_MODEL,
-            token=token,
+    if not torch.cuda.is_available():
+        raise DiarizationError(
+            "DiariZen trong bản ứng dụng này yêu cầu NVIDIA CUDA GPU, nhưng "
+            "PyTorch không nhận thấy CUDA."
         )
+
+    requested_device = os.environ.get("DIARIZATION_DEVICE", "cuda:0").strip().lower()
+    if requested_device not in {"cuda", "cuda:0"}:
+        raise DiarizationError(
+            "DiariZen hiện sử dụng CUDA GPU đầu tiên. DIARIZATION_DEVICE chỉ "
+            "có thể là cuda hoặc cuda:0."
+        )
+
+    try:
+        from diarizen.pipelines.inference import DiariZenPipeline
+    except ImportError as error:
+        raise DiarizationError(
+            "Thiếu DiariZen hoặc dependency đi kèm. Hãy cài môi trường "
+            "DiariZen theo hướng dẫn trong README.md."
+        ) from error
+
+    try:
+        pipeline = DiariZenPipeline.from_pretrained(DIARIZATION_MODEL)
     except Exception as error:
-        message = str(error).lower()
-        if not token or any(
-            marker in message
-            for marker in ("401", "403", "gated", "restricted", "token")
-        ):
-            raise DiarizationError(
-                "Không tải được model pyannote Community-1. Hãy chấp nhận điều "
-                "khoản của model trên Hugging Face và đặt biến môi trường HF_TOKEN "
-                "trong terminal dùng để chạy app."
-            ) from error
-        raise DiarizationError(f"Không tải được model diarization: {error}") from error
+        raise DiarizationError(
+            f"Không tải được model DiariZen {DIARIZATION_MODEL}: {error}"
+        ) from error
 
     if pipeline is None:
         raise DiarizationError(
-            "Không tải được model pyannote Community-1. Hãy kiểm tra quyền truy cập "
-            "model và biến môi trường HF_TOKEN."
+            f"Không tải được model DiariZen {DIARIZATION_MODEL}."
         )
 
-    requested_device = os.environ.get("DIARIZATION_DEVICE", "").strip().lower()
-    if requested_device:
-        if requested_device.startswith("cuda") and not torch.cuda.is_available():
-            raise DiarizationError(
-                "DIARIZATION_DEVICE yêu cầu CUDA nhưng PyTorch không nhận GPU CUDA."
-            )
-        device = torch.device(requested_device)
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    pipeline.to(device)
-    print(f"[diarization] Model ready on {device}: {DIARIZATION_MODEL}")
-    if device.type == "cpu":
-        print(
-            "[diarization] Warning: CPU diarization can be slow for long recordings."
-        )
+    gpu_name = torch.cuda.get_device_name(0)
+    print(f"[diarization] DiariZen ready on cuda:0 ({gpu_name}): {DIARIZATION_MODEL}")
     return pipeline
 
 
 def get_pipeline():
-    """Load the pyannote pipeline once and reuse it across jobs."""
+    """Load the DiariZen pipeline once and reuse it across jobs."""
     global _pipeline
     if _pipeline is None:
         with _pipeline_lock:
@@ -273,6 +247,22 @@ def _speaker_constraints(
     return {name: int(value) for name, value in values.items() if value is not None}
 
 
+def _diarizen_speaker_bounds(
+    pipeline,
+    constraints: dict[str, int],
+) -> tuple[int, int]:
+    """Translate the existing speaker controls to DiariZen cluster bounds."""
+    exact = constraints.get("num_speakers")
+    if exact is not None:
+        return exact, exact
+
+    minimum = constraints.get("min_speakers", int(pipeline.min_speakers))
+    maximum = constraints.get("max_speakers", int(pipeline.max_speakers))
+    if minimum > maximum:
+        raise ValueError("min_speakers cannot be greater than max_speakers.")
+    return minimum, maximum
+
+
 def _raw_turns(annotation) -> list[tuple[float, float, str]]:
     turns = []
     for segment, _track, speaker in annotation.itertracks(yield_label=True):
@@ -351,32 +341,33 @@ def diarize_audio_files(
         )
     audio = np.ascontiguousarray(audio, dtype=np.float32)
 
-    try:
-        import torch
-    except ImportError as error:
-        raise DiarizationError(
-            "Thiếu PyTorch, không thể chạy speaker diarization."
-        ) from error
-
-    waveform = torch.from_numpy(audio).unsqueeze(0)
     pipeline = get_pipeline()
-    print(
-        "[diarization] Running full-meeting clustering with constraints: "
-        f"{constraints or 'automatic'}"
-    )
     try:
         with _inference_lock:
-            output = pipeline(
-                {"waveform": waveform, "sample_rate": sample_rate},
-                **constraints,
+            default_minimum = pipeline.min_speakers
+            default_maximum = pipeline.max_speakers
+            minimum_speakers, maximum_speakers = _diarizen_speaker_bounds(
+                pipeline,
+                constraints,
             )
+            print(
+                "[diarization] Running DiariZen full-meeting clustering with bounds: "
+                f"{minimum_speakers}-{maximum_speakers}"
+            )
+            pipeline.min_speakers = minimum_speakers
+            pipeline.max_speakers = maximum_speakers
+            try:
+                output = pipeline(meeting_wav)
+            finally:
+                pipeline.min_speakers = default_minimum
+                pipeline.max_speakers = default_maximum
     except Exception as error:
-        raise DiarizationError(f"Speaker diarization thất bại: {error}") from error
+        raise DiarizationError(f"DiariZen diarization thất bại: {error}") from error
 
     annotation = getattr(output, "speaker_diarization", output)
     raw_turns = _raw_turns(annotation)
     if not raw_turns:
-        raise DiarizationError("Pyannote không tìm thấy lượt nói nào trong audio.")
+        raise DiarizationError("DiariZen không tìm thấy lượt nói nào trong audio.")
 
     retained = [
         turn for turn in raw_turns if turn[1] - turn[0] >= min_turn_seconds

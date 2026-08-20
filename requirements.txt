@@ -10,4 +10,4 @@ transformers>=4.48.3,<5
 werkzeug
 imageio-ffmpeg
 pyodbc>=5,<6
-pyannote.audio>=4,<5
+# DiariZen and its bundled pyannote fork are installed from source; see README.md.

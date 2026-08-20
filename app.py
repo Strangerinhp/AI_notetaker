@@ -479,7 +479,7 @@ def process_audio_files(
                 "diarizing",
                 "Đang ghép toàn bộ audio và nhận diện người nói...",
             )
-            # Import lazily so the ordinary pipeline does not require pyannote.
+            # Import lazily so the ordinary pipeline does not require DiariZen.
             from speaker_diarization import diarize_audio_files
 
             diarization_result = diarize_audio_files(

@@ -78,15 +78,30 @@ Thứ tự bắt buộc là:
 !pip install -r requirements.txt
 ```
 
-Nếu dùng tách người nói, đặt `HF_TOKEN` bằng Colab Secrets thay vì ghi token vào
-notebook:
+Nếu dùng tách người nói, cài DiariZen và bản `pyannote-audio` đi kèm source của
+DiariZen. Không cài thêm `pyannote.audio>=4` vào môi trường này:
 
 ```python
-import os
-from google.colab import userdata
+%cd /content
+!git clone --recursive https://github.com/BUTSpeechFIT/DiariZen.git
+%cd /content/DiariZen
+!pip install -r requirements.txt
+!pip install -e .
+!pip install -e "/content/DiariZen/pyannote-audio[dev,testing]" -c constraints.txt
+%cd /content/YOUR_REPOSITORY
+```
 
-os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
-os.environ["DIARIZATION_DEVICE"] = "cuda"
+DiariZen công bố môi trường tham chiếu là Python 3.10, PyTorch 2.1.1 và CUDA
+12.1. Nếu runtime hiện tại không tương thích với các phiên bản này, hãy dùng
+runtime/container CUDA tương ứng thay vì trộn DiariZen với pyannote 4.
+
+Có thể kiểm tra GPU trước khi chạy app:
+
+```python
+import torch
+
+assert torch.cuda.is_available(), "DiariZen cần CUDA GPU"
+print(torch.cuda.get_device_name(0))
 ```
 
 ### 2. Cài, khởi động Ollama và tải Qwen 3.5 9B
@@ -188,10 +203,10 @@ Mỗi khi Colab bị `Disconnect and delete runtime`, phải chạy lại các c
 đúng thứ tự trên vì máy ảo và dữ liệu RAM đã bị xóa. Bạn vẫn không cần sửa bất
 kỳ dòng nào trong `app.py`.
 
-Trên T4, cấu hình dễ ổn định nhất là chọn **Zipformer 30M** và tắt diarization.
-Whisper `large-v3`, pyannote và Qwen cùng giữ model trên GPU có thể vượt VRAM.
-Nếu cần Whisper hoặc diarization, dùng `--api` cho phần tóm tắt hoặc ép
-`DIARIZATION_DEVICE=cpu` để giảm tranh chấp VRAM.
+Trên T4, cấu hình nhẹ nhất là chọn **Zipformer 30M** và tắt diarization.
+Whisper `large-v3`, DiariZen và Qwen cùng giữ model trên GPU có thể vượt VRAM.
+Nếu cần diarization, nên dùng Zipformer và `--api` để dành VRAM cho DiariZen;
+bản ứng dụng này không có fallback diarization bằng CPU.
 
 ## Whisper cho cuộc họp đa ngôn ngữ
 
@@ -216,21 +231,21 @@ python app.py
 Model Zipformer này có giấy phép **CC BY-NC-ND 4.0**, vì vậy chỉ nên dùng cho
 nghiên cứu/demo phi thương mại nếu chưa có giấy phép khác từ tác giả.
 
-## Tách người nói (Whisper, NghiASR và Zipformer)
+## Tách người nói bằng DiariZen (Whisper, NghiASR và Zipformer)
 
 Giao diện có tùy chọn **Tách người nói** cho Whisper, NghiASR và Zipformer. Khi
 bật, app thực hiện pipeline sau:
 
 1. Ghép các file theo đúng thứ tự tải lên và đổi toàn bộ cuộc họp thành WAV
    mono 16 kHz bằng FFmpeg.
-2. Chạy `pyannote/speaker-diarization-community-1` trên toàn bộ cuộc họp để
-   phân cụm người nói.
+2. Chạy `BUT-FIT/diarizen-wavlm-large-s80-md-v2` bằng CUDA trên toàn bộ cuộc họp
+   để phân cụm người nói.
 3. Bỏ các lượt speaker ngắn hơn ngưỡng trên giao diện (mặc định `2.0` giây)
    khỏi bước căn speaker; audio gốc không bị cắt bỏ.
 4. Chạy model ASR đã chọn trên audio liên tục bằng sliding window 30 giây,
    overlap 5 giây. Mỗi cửa sổ chỉ giữ hypothesis thuộc vùng trung tâm của nó để
    không lặp chữ trong phần overlap.
-5. Dùng word/token timestamps để gán kết quả ASR về lượt nói của pyannote và tạo
+5. Dùng word/token timestamps để gán kết quả ASR về lượt nói của DiariZen và tạo
    transcript dạng `[00:00:05 - 00:00:12] người nói 1: ...`.
 
 Có thể chỉnh hai tham số sliding window mà không sửa code:
@@ -245,40 +260,37 @@ Overlap lớn hơn cung cấp thêm ngữ cảnh tại biên nhưng làm tăng t
 
 ### Thiết lập lần đầu
 
-Chạy cài đặt dependency trong môi trường Python của app:
+DiariZen chưa được cài qua `requirements.txt` vì project yêu cầu bản
+`pyannote-audio` nằm trong chính repository của nó. Trên Linux/CUDA, cài theo
+source chính thức trước khi chạy app:
 
-```powershell
-pip install -r requirements.txt
+```bash
+git clone --recursive https://github.com/BUTSpeechFIT/DiariZen.git
+cd DiariZen
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python -m pip install -e "./pyannote-audio[dev,testing]" -c constraints.txt
+cd /path/to/AI_notetaker-copy
+python -m pip install -r requirements.txt
+python app.py --no-database --api
 ```
 
-Sau đó:
+Model và embedding được tải từ Hugging Face trong lần chạy đầu. Có thể đặt
+`HF_TOKEN` nếu môi trường Hugging Face của bạn yêu cầu xác thực hoặc gặp giới
+hạn tải xuống, nhưng không cần chấp nhận model pyannote Community-1 nữa.
 
-1. Đăng nhập Hugging Face và chấp nhận điều khoản tại
-   `https://huggingface.co/pyannote/speaker-diarization-community-1`.
-2. Tạo read token tại `https://huggingface.co/settings/tokens`.
-3. Đặt token trong **cùng terminal sẽ chạy app**:
-
-```powershell
-$env:HF_TOKEN="hf_..."
-python app.py --api
-```
-
-Nếu không muốn dùng PowerShell, mở **Edit environment variables for your
-account** trong Windows, tạo biến người dùng `HF_TOKEN`, rồi đóng và mở lại
-VS Code/terminal trước khi chạy app. Chỉ mở một terminal mới là chưa đủ nếu VS
-Code đã được mở trước lúc tạo biến môi trường.
-
-Model chỉ cần token để tải lần đầu và quá trình diarization diễn ra trên máy.
-App mặc định đặt `PYANNOTE_METRICS_ENABLED=0`; người vận hành có thể tự đặt bằng
-`1` trước khi chạy app nếu muốn bật telemetry ẩn danh của pyannote.
-Máy hiện dùng bản PyTorch CPU nên xử lý các cuộc họp dài sẽ chậm; CUDA GPU được
-chọn tự động nếu môi trường PyTorch nhận được GPU. Có thể ép thiết bị bằng biến
-`DIARIZATION_DEVICE=cpu` hoặc `DIARIZATION_DEVICE=cuda`.
+Ứng dụng kiểm tra CUDA khi DiariZen được bật và báo lỗi ngay nếu PyTorch không
+nhận GPU. `DIARIZATION_DEVICE` có thể để trống hoặc đặt thành `cuda:0`; CPU và
+Windows không nằm trong phạm vi hỗ trợ của bản thử nghiệm này.
 
 Nếu biết chính xác số người tham gia, nhập số đó trên giao diện để phân cụm ổn
 định hơn. Ngưỡng `2.0` giây bám theo notebook tham chiếu nhưng có thể làm mất
 các câu chen ngang ngắn; giảm ngưỡng nếu các câu này quan trọng. Pipeline mới
 không bật loudness normalization để giữ hành vi audio hiện có của repo.
+
+Source code DiariZen dùng giấy phép MIT, nhưng trọng số model Large s80 v2 dùng
+CC BY-NC 4.0. Chỉ sử dụng model này cho nghiên cứu hoặc demo phi thương mại nếu
+chưa có giấy phép khác từ tác giả.
 
 ## Tình trạng SQL Server trên máy này
 

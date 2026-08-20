@@ -212,7 +212,7 @@ def transcribe_diarized_segments(
     language: str | None = None,
     progress_callback=None,
 ) -> str:
-    """Transcribe pyannote turns and retain speaker/time attribution."""
+    """Transcribe diarization turns and retain speaker/time attribution."""
     lines = []
     total = len(turns)
     for index, turn in enumerate(turns, start=1):

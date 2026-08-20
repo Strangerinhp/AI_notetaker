@@ -764,7 +764,7 @@
     ui.speakerCount.disabled = !enabled;
     ui.minSpeakerTurn.disabled = !enabled;
     ui.diarizationNote.textContent = supported
-      ? "Dùng pyannote trước khi chạy model ASR đã chọn."
+      ? "Dùng DiariZen Large s80 v2 trước khi chạy model ASR đã chọn."
       : "Model transcript đã chọn chưa hỗ trợ tách người nói.";
   }
 

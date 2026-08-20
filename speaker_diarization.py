@@ -101,11 +101,14 @@ def _load_pipeline():
 
     try:
         # PyTorch 2.6+ defaults torch.load to weights_only=True. DiariZen's
-        # official checkpoint stores torch.torch_version.TorchVersion in its
-        # metadata, so allowlist only that trusted PyTorch type while loading.
+        # official checkpoint stores TorchVersion and pyannote task metadata,
+        # so allowlist only those trusted types while loading.
+        from pyannote.audio.core.task import Problem, Resolution, Specifications
         from torch.torch_version import TorchVersion
 
-        with torch.serialization.safe_globals([TorchVersion]):
+        with torch.serialization.safe_globals(
+            [TorchVersion, Specifications, Problem, Resolution]
+        ):
             pipeline = DiariZenPipeline.from_pretrained(DIARIZATION_MODEL)
     except Exception as error:
         raise DiarizationError(

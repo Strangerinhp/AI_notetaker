@@ -283,6 +283,15 @@ hạn tải xuống, nhưng không cần chấp nhận model pyannote Community-
 nhận GPU. `DIARIZATION_DEVICE` có thể để trống hoặc đặt thành `cuda:0`; CPU và
 Windows không nằm trong phạm vi hỗ trợ của bản thử nghiệm này.
 
+Batch size inference của DiariZen mặc định là `16`. Nếu GPU vẫn hết VRAM, giảm
+xuống `8` hoặc `4` trước khi khởi động Flask:
+
+```python
+import os
+
+os.environ["DIARIZEN_BATCH_SIZE"] = "8"
+```
+
 Nếu biết chính xác số người tham gia, nhập số đó trên giao diện để phân cụm ổn
 định hơn. Ngưỡng `2.0` giây bám theo notebook tham chiếu nhưng có thể làm mất
 các câu chen ngang ngắn; giảm ngưỡng nếu các câu này quan trọng. Pipeline mới

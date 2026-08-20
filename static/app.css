@@ -577,11 +577,19 @@ body.settings-open { overflow: hidden; }
 
 .toasts { position: fixed; right: 18px; bottom: 18px; z-index: 100; display: flex; flex-direction: column; gap: 7px; pointer-events: none; }
 .toast {
-  min-width: 230px; max-width: 350px; padding: 11px 13px; color: white;
+  display: flex; align-items: flex-start; gap: 10px; min-width: 230px; max-width: 350px;
+  padding: 11px 13px; color: white; pointer-events: auto;
   background: #292927; border-radius: 9px; box-shadow: 0 12px 34px rgba(20,20,18,.2);
   font-size: 10px; line-height: 1.45; animation: toast .18s ease;
 }
 .toast.error { background: var(--red); }
+.toast-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast-close {
+  flex: 0 0 auto; width: 23px; height: 23px; margin: -4px -5px 0 0; padding: 0;
+  color: inherit; background: transparent; border: 0; border-radius: 6px;
+  font: 500 20px/1 Arial, sans-serif; cursor: pointer; opacity: .8;
+}
+.toast-close:hover, .toast-close:focus-visible { background: rgba(255,255,255,.16); opacity: 1; outline: none; }
 
 @keyframes pulse { 50% { opacity: .4; } }
 @keyframes wave { to { height: 6px; } }

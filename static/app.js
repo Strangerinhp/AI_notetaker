@@ -146,9 +146,25 @@
   function toast(message, error = false) {
     const element = document.createElement("div");
     element.className = `toast${error ? " error" : ""}`;
-    element.textContent = message;
+    element.setAttribute("role", error ? "alert" : "status");
+
+    const text = document.createElement("span");
+    text.className = "toast-message";
+    text.textContent = message;
+    element.appendChild(text);
+
+    if (error) {
+      const close = document.createElement("button");
+      close.className = "toast-close";
+      close.type = "button";
+      close.textContent = "×";
+      close.setAttribute("aria-label", "Đóng thông báo lỗi");
+      close.addEventListener("click", () => element.remove());
+      element.appendChild(close);
+    }
+
     ui.toasts.appendChild(element);
-    window.setTimeout(() => element.remove(), 3200);
+    if (!error) window.setTimeout(() => element.remove(), 3200);
   }
 
   function setSaveStatus(type, text) {

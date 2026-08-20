@@ -32,6 +32,7 @@ DIARIZATION_MODEL = os.environ.get(
 )
 DEFAULT_MIN_TURN_SECONDS = 2.0
 DEFAULT_ASR_PADDING_SECONDS = 0.05
+DEFAULT_DIARIZEN_BATCH_SIZE = 16
 
 _pipeline = None
 _pipeline_lock = threading.Lock()
@@ -120,8 +121,28 @@ def _load_pipeline():
             f"Không tải được model DiariZen {DIARIZATION_MODEL}."
         )
 
+    batch_size_text = os.environ.get(
+        "DIARIZEN_BATCH_SIZE",
+        str(DEFAULT_DIARIZEN_BATCH_SIZE),
+    ).strip()
+    try:
+        batch_size = int(batch_size_text)
+    except ValueError as error:
+        raise DiarizationError(
+            "DIARIZEN_BATCH_SIZE phải là số nguyên từ 1 đến 64."
+        ) from error
+    if not 1 <= batch_size <= 64:
+        raise DiarizationError(
+            "DIARIZEN_BATCH_SIZE phải nằm trong khoảng từ 1 đến 64."
+        )
+
+    pipeline.segmentation_batch_size = batch_size
+    pipeline.embedding_batch_size = batch_size
     gpu_name = torch.cuda.get_device_name(0)
-    print(f"[diarization] DiariZen ready on cuda:0 ({gpu_name}): {DIARIZATION_MODEL}")
+    print(
+        f"[diarization] DiariZen ready on cuda:0 ({gpu_name}), "
+        f"batch_size={batch_size}: {DIARIZATION_MODEL}"
+    )
     return pipeline
 
 

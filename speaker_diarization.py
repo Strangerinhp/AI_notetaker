@@ -100,7 +100,13 @@ def _load_pipeline():
         ) from error
 
     try:
-        pipeline = DiariZenPipeline.from_pretrained(DIARIZATION_MODEL)
+        # PyTorch 2.6+ defaults torch.load to weights_only=True. DiariZen's
+        # official checkpoint stores torch.torch_version.TorchVersion in its
+        # metadata, so allowlist only that trusted PyTorch type while loading.
+        from torch.torch_version import TorchVersion
+
+        with torch.serialization.safe_globals([TorchVersion]):
+            pipeline = DiariZenPipeline.from_pretrained(DIARIZATION_MODEL)
     except Exception as error:
         raise DiarizationError(
             f"Không tải được model DiariZen {DIARIZATION_MODEL}: {error}"
